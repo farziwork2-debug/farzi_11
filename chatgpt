@@ -1,0 +1,4123 @@
+
+Log in
+Sign up for free
+#!/usr/bin/env bash
+# Read-only inspection of the EtherCAT bus using IGH's 'ethercat' CLI
+# ./bringup.sh -> inspect every slave
+# ./bringup.sh 0 -> inspect slave at position 0
+
+set -u
+E=${ETHERCAT:-ethercat}
+command -v "$E" >/dev/null { echo "ethercat tool not in path (try ETHERCAT=/opt/etherlab/bin/ethercat)";exit 1; }
+
+echo  "=========master=========="
+$E master | head -30
+echo
+echo "=========slaves======="
+$E salves -v
+
+if [ $# -ge 1 ]; then POS="$1"; else POS = $($E slaves | awk '{print $1}' | sed 's/:.*//'); fi
+
+for p in $POS; do
+	echo 
+	echo "########## slave $p ##########"
+	echo "---- identify (0x01018): vendor / product / revision / serial"
+	for s in 1 2 3 4; dp $E upload -p "$p" 0x01018 $s --type uint32 2>&1; done
+	echo "--- PDOs currently assigned/mapped "
+	$E pdos -p "$p"
+	echo "---- key objects"
+	$E upload -p "$p" 0x6041 0 --type uint16 2>&1		#statusword
+	$E upload -p "$p" 0x6061 0 --type int8 2>&1  		#mode display
+	$E upload -p "$p" 0x6064 0 --type int32 2>&1 		#actual position
+	echo "--- optional: is 0x6072 (max torque) present? (needed for --max-tq-sdo)"
+	$E upload -p "$p" 0x6072 0 --type uint16 2>&1 || echo " not readable -> do not use --max-tq-sdo"
+	echo "--- full dictionary dump to sdos_$p.txt"
+	$E sdos -p "$p" > "sdos_$p.txt" 2>&1 && echo "   saved"
+	echo "--- is PDO mapping writable? (0x1600, 0x1A00, 0x1C12, 0x1C13 present in dump?)"
+	grep -E "0x1600|0x1A00|0x1C12|0x1C13" "sdos_$p.txt" | head || true
+done
+echo
+echo "Next: ./myactl_ctl --monitor" 
+
+
+ ./bringup.sh 2>&1 | tee bringup_out.txt
+./bringup.sh: line 8: syntax error near unexpected token `}'
+./bringup.sh: line 8: `command -v "$E" >/dev/null { echo "ethercat tool not in path (try ETHERCAT=/opt/etherlab/bin/ethercat)";exit 1; }'
+
+The syntax error is on line 8. You're missing || (or an if statement) after the redirection.
+1. Fix line 8
+Replace:
+
+bash
+command -v "$E" >/dev/null { echo "ethercat tool not in path (try ETHERCAT=/opt/etherlab/bin/ethercat)";exit 1; }
+With:
+
+bash
+command -v "$E" >/dev/null 2>&1 || {
+    echo "ethercat tool not in path (try ETHERCAT=/opt/etherlab/bin/ethercat)"
+    exit 1
+}
+2. There are several more errors in your script
+I noticed these additional issues:
+Current code	
+Problem	
+Correction
+$E salves -v	
+Typo	
+$E slaves -v
+POS = $(...)	
+Invalid Bash assignment	
+POS=$(...)
+for s in 1 2 3 4; dp	
+Invalid loop syntax	
+for s in 1 2 3 4; do
+done	
+Missing loop closure	
+Add corresponding done
+0x01018	
+Wrong object index	
+0x1018 (Identity Object)
+3. Corrected sections
+Slave position detection:
+
+bash
+if [ $# -ge 1 ]; then
+    POS="$1"
+else
+    POS=$($E slaves | awk '{print $1}' | sed 's/:.*//')
+fi
+Identity object reading:
+
+bash
+for s in 1 2 3 4; do
+    $E upload -p "$p" 0x1018 "$s" --type uint32 2>&1
+done
+4. Important: Check your EtherCAT command
+Your script is intended to be read-only, which is good for initial EtherCAT inspection.
+The following commands are appropriate for inspection:
+ethercat master
+ethercat slaves -v
+ethercat pdos
+ethercat upload
+ethercat sdos
+Avoid changing PDO assignments or writing SDO values during this initial inspection.
+5. Run again
+
+bash
+chmod +x bringup.sh
+./bringup.sh 2>&1 | tee bringup_out.txt
+For inspecting all slaves:
+
+bash
+./bringup.sh
+For inspecting slave 0:
+
+bash
+./bringup.sh 0
+One more recommendation: Your script should check whether each slave exists before reading its SDO objects. This will make the diagnostic output more reliable when a slave is disconnected or not responding.
+
+give corrected code
+
+Here is the fully corrected bringup.sh script. It fixes the Bash syntax errors, command typos, loop structure, slave detection, and EtherCAT Identity Object index.
+
+bash
+
+#!/usr/bin/env bash
+# Read-only inspection of the EtherCAT bus using IGH's 'ethercat' CLI
+#
+# ./bringup.sh       -> inspect every slave
+# ./bringup.sh 0     -> inspect slave at position 0
+#
+# Optional:
+# ETHERCAT=/opt/etherlab/bin/ethercat ./bringup.sh
+
+set -u
+
+E=${ETHERCAT:-ethercat}
+
+# Check EtherCAT CLI availability
+if ! command -v "$E" >/dev/null 2>&1; then
+    echo "ERROR: ethercat tool not in PATH."
+    echo "Try: ETHERCAT=/opt/etherlab/bin/ethercat"
+    exit 1
+fi
+
+echo "========= MASTER =========="
+$E master | head -30
+
+echo
+echo "========= SLAVES =========="
+$E slaves -v
+
+# Determine slave positions
+if [ $# -ge 1 ]; then
+    POS="$1"
+else
+    POS=$($E slaves | awk '{print $1}' | sed 's/:.*//')
+fi
+
+if [ -z "$POS" ]; then
+    echo "No EtherCAT slaves detected."
+    exit 0
+fi
+
+# Inspect each requested slave
+for p in $POS; do
+
+    echo
+    echo "########## SLAVE $p ##########"
+
+    echo "---- Identity Object (0x1018)"
+    echo "Vendor / Product / Revision / Serial"
+
+    for s in 1 2 3 4; do
+        echo "Subindex $s:"
+        $E upload -p "$p" 0x1018 "$s" --type uint32 2>&1
+    done
+
+    echo
+    echo "---- PDOs currently assigned/mapped"
+    $E pdos -p "$p" 2>&1
+
+    echo
+    echo "---- Key objects"
+
+    echo "Statusword (0x6041)"
+    $E upload -p "$p" 0x6041 0 --type uint16 2>&1
+
+    echo "Mode display (0x6061)"
+    $E upload -p "$p" 0x6061 0 --type int8 2>&1
+
+    echo "Actual position (0x6064)"
+    $E upload -p "$p" 0x6064 0 --type int32 2>&1
+
+    echo
+    echo "---- Optional: Max torque (0x6072)"
+    $E upload -p "$p" 0x6072 0 --type uint16 2>&1 \
+        || echo "Not readable -> do not use --max-tq-sdo"
+
+    echo
+    echo "---- Full dictionary dump"
+
+    $E sdos -p "$p" > "sdos_${p}.txt" 2>&1
+
+    if [ $? -eq 0 ]; then
+        echo "Saved: sdos_${p}.txt"
+    else
+        echo "SDO dictionary dump failed."
+    fi
+
+    echo
+    echo "---- PDO mapping objects in dictionary"
+
+    if [ -f "sdos_${p}.txt" ]; then
+        grep -E "0x1600|0x1A00|0x1C12|0x1C13" \
+            "sdos_${p}.txt" | head || true
+    fi
+
+done
+
+echo
+echo "========= INSPECTION COMPLETE =========="
+echo "Next: ./myactl_ctl --monitor"
+Run the script
+
+bash
+chmod +x bringup.sh
+Inspect all slaves:
+
+bash
+./bringup.sh 2>&1 | tee bringup_out.txt
+Inspect slave 0 only:
+
+bash
+./bringup.sh 0 2>&1 | tee bringup_out.txt
+If EtherCAT is installed in a custom location:
+
+bash
+ETHERCAT=/opt/etherlab/bin/ethercat ./bringup.sh
+Important: This script performs SDO reads and dictionary inspection, not configuration writes. Successful reads still depend on the slave supporting the requested objects and being in a state that permits those reads.
+
+link=1  master AL=0x2  slaves=1  comm_bad=750  lat_max=14 us
+[0] WAIT_OP    sw=0x0000 md= 0 pos=          0 (    0.00 deg) vel=       0 (   0.00 rpm) tq=  0.0%
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+link=1  master AL=0x2  slaves=1  comm_bad=1000  lat_max=14 us
+[0] WAIT_OP    sw=0x0000 md= 0 pos=          0 (    0.00 deg) vel=       0 (   0.00 rpm) tq=  0.0%
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+link=1  master AL=0x2  slaves=1  comm_bad=1250  lat_max=14 us
+[0] WAIT_OP    sw=0x0000 md= 0 pos=          0 (    0.00 deg) vel=       0 (   0.00 rpm) tq=  0.0%
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+link=1  master AL=0x2  slaves=1  comm_bad=1500  lat_max=14 us
+[0] WAIT_OP    sw=0x0000 md= 0 pos=          0 (    0.00 deg) vel=       0 (   0.00 rpm) tq=  0.0%
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+link=1  master AL=0x2  slaves=1  comm_bad=1750  lat_max=14 us
+[0] WAIT_OP    sw=0x0000 md= 0 pos=          0 (    0.00 deg) vel=       0 (   0.00 rpm) tq=  0.0%
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+link=1  master AL=0x2  slaves=1  comm_bad=2000  lat_max=14 us
+[0] WAIT_OP    sw=0x0000 md= 0 pos=          0 (    0.00 deg) vel=       0 (   0.00 rpm) tq=  0.0%
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+link=1  master AL=0x2  slaves=1  comm_bad=0  lat_max=14 us
+[0] WAIT_OP    sw=0x0210 md= 0 pos=      61193 (  168.07 deg) vel=       4 (   0.00 rpm) tq=  0.0%
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+link=1  master AL=0x8  slaves=1  comm_bad=0  lat_max=14 us
+[0] PREPARE    sw=0x1231 md= 9 pos=      61193 (  168.07 deg) vel=       5 (   0.00 rpm) tq=  0.0%
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+link=1  master AL=0x8  slaves=1  comm_bad=0  lat_max=15 us
+[0] DONE       sw=0x1231 md= 9 pos=      61193 (  168.07 deg) vel=      -4 (  -0.00 rpm) tq=  0.0%
+
+done.
+
+/*
+ * myact_ctl.c  -  Minimal IgH EtherCAT master application for MyActuator
+ *                 RMD-X (EtherCAT "E" variants) on the Cerebellum board.
+ *
+ * Modes (CiA 402 cyclic synchronous, as documented by MyActuator):
+ *   csp-hold  : hold the position the motor had when enabled
+ *   csp-sine  : smooth 0 -> amp -> 0 cosine move, repeated (position)
+ *   csv       : ramp to a constant velocity (counts/s)
+ *   cst       : ramp to a constant torque   (per-mille of rated current)
+ *
+ * Safety features: everything is armed with zero/current-position targets,
+ * ramped, limit-checked, and ramped down on Ctrl-C.  Use --monitor first.
+ *
+ * Build:  make            (see Makefile)
+ * Run  :  sudo ./myact_ctl --monitor
+ *         sudo ./myact_ctl --mode csp-sine --amp 5000 --period 4
+ *
+ * ASSUMPTIONS you must verify on your drive (see bringup.sh):
+ *   - the default PDO mapping contains the entries listed in ENT[] below
+ *     (otherwise build with -DUSE_CUSTOM_PDO and check 0x1600/0x1A00)
+ *   - DC AssignActivate (--dc-assign) matches the ESI file
+ */
+#define _GNU_SOURCE
+#include <stdio.h>
+#include <stdlib.h>
+#include <stdint.h>
+#include <string.h>
+#include <math.h>
+#include <time.h>
+#include <signal.h>
+#include <sched.h>
+#include <pthread.h>
+#include <unistd.h>
+#include <errno.h>
+#include <sys/mman.h>
+#include <ecrt.h>
+
+#define MAX_AX        16
+#define NSEC          1000000000LL
+#define COUNTS_PER_REV 131072.0   /* 17-bit output encoder (verify!) */
+
+/* ---------------- CiA 402 constants ---------------- */
+#define CW_SHUTDOWN   0x0006
+#define CW_SWITCH_ON  0x0007
+#define CW_ENABLE     0x000F
+#define CW_FAULT_RST  0x0080
+#define SW_FAULT      0x0008
+
+enum { OPM_CSP = 8, OPM_CSV = 9, OPM_CST = 10 };
+
+/* ---------------- PDO entries we want ---------------- */
+enum { E_CW, E_MODE, E_TPOS, E_TVEL, E_TTQ,
+       E_SW, E_MODED, E_APOS, E_AVEL, E_ATQ, E_N };
+
+static const struct { uint16_t idx; uint8_t sub; const char *name; } ENT[E_N] = {
+    {0x6040, 0, "controlword"},   {0x6060, 0, "mode_of_operation"},
+    {0x607A, 0, "target_position"}, {0x60FF, 0, "target_velocity"},
+    {0x6071, 0, "target_torque"},
+    {0x6041, 0, "statusword"},    {0x6061, 0, "mode_display"},
+    {0x6064, 0, "actual_position"}, {0x606C, 0, "actual_velocity"},
+    {0x6077, 0, "actual_torque"},
+};
+
+#ifdef USE_CUSTOM_PDO
+/* Only use if the drive really supports configurable PDOs at 0x1600/0x1A00.
+ * Verify with:  ethercat sdos -p 0  |  grep -E "0x1600|0x1A00|0x1C12|0x1C13" */
+static ec_pdo_entry_info_t rx_entries[] = {
+    {0x6040, 0, 16}, {0x6060, 0, 8}, {0x607A, 0, 32}, {0x60FF, 0, 32}, {0x6071, 0, 16}};
+static ec_pdo_entry_info_t tx_entries[] = {
+    {0x6041, 0, 16}, {0x6061, 0, 8}, {0x6064, 0, 32}, {0x606C, 0, 32}, {0x6077, 0, 16}};
+static ec_pdo_info_t pdos[] = {{0x1600, 5, rx_entries}, {0x1A00, 5, tx_entries}};
+static ec_sync_info_t syncs[] = {
+    {0, EC_DIR_OUTPUT, 0, NULL, EC_WD_DISABLE},
+    {1, EC_DIR_INPUT,  0, NULL, EC_WD_DISABLE},
+    {2, EC_DIR_OUTPUT, 1, pdos + 0, EC_WD_ENABLE},
+    {3, EC_DIR_INPUT,  1, pdos + 1, EC_WD_DISABLE},
+    {0xff}};
+#endif
+
+/* ---------------- configuration (command line) ---------------- */
+typedef enum { PRF_HOLD, PRF_SINE } prf_t;
+static struct {
+    int      opmode;          /* 8/9/10 */
+    prf_t    profile;
+    int      monitor;         /* no enable, only observe */
+    int      nslaves;         /* 0 = all found */
+    long     cycle_us;
+    double   amp;             /* counts */
+    double   period;          /* s */
+    double   vel;             /* counts/s */
+    double   vel_accel;       /* counts/s^2 */
+    double   vel_limit;       /* counts/s */
+    double   tq;              /* per-mille of rated */
+    double   tq_rate;         /* per-mille per s */
+    double   tq_limit;        /* per-mille */
+    double   max_step;        /* counts per cycle (CSP slew limit) */
+    double   duration;        /* s, 0 = until Ctrl-C */
+    int      use_dc;
+    unsigned dc_assign;
+    int      dc_shift;
+    int      reset_fault;
+    int      max_tq_sdo;      /* 0 = do not write 0x6072 */
+    int      rt_prio;
+    int      cpu;
+} cfg = {
+    .opmode = OPM_CSP, .profile = PRF_HOLD, .monitor = 0, .nslaves = 0,
+    .cycle_us = 1000, .amp = 0, .period = 4.0, .vel = 0, .vel_accel = 131072,
+    .vel_limit = 262144, .tq = 0, .tq_rate = 200, .tq_limit = 200,
+    .max_step = 200, .duration = 0, .use_dc = 1, .dc_assign = 0x0300,
+    .dc_shift = 0, .reset_fault = 0, .max_tq_sdo = 0, .rt_prio = 80, .cpu = -1,
+};
+
+/* ---------------- state ---------------- */
+typedef enum { PH_WAIT_OP, PH_MONITOR, PH_PREPARE, PH_ENABLING, PH_RUN,
+               PH_STOPPING, PH_DONE, PH_FAULT } phase_t;
+static const char *PH_NAME[] = {"WAIT_OP", "MONITOR", "PREPARE", "ENABLING",
+                                "RUN", "STOPPING", "DONE", "FAULT"};
+
+typedef struct {
+    ec_slave_config_t *sc;
+    uint32_t vendor, product;
+    char     name[64];
+    int      off[E_N];       /* byte offsets in domain, -1 = not mapped */
+    phase_t  phase;
+    unsigned cnt;            /* generic per-phase cycle counter */
+    unsigned run_cycles;
+    int32_t  pos0;
+    double   tpos_d, tvel_d, ttq_d;
+    /* snapshot for the monitor thread */
+    volatile uint16_t s_sw;
+    volatile int32_t  s_pos, s_vel;
+    volatile int16_t  s_tq;
+    volatile int8_t   s_mode;
+} axis_t;
+
+static axis_t   ax[MAX_AX];
+static int      n_ax;
+static ec_master_t *master;
+static ec_domain_t *domain;
+static uint8_t *dom_data;
+static volatile sig_atomic_t g_stop;
+static volatile int g_comm_bad, g_master_al, g_resp, g_link;
+static volatile long long g_lat_max_ns;
+static double cycle_s;
+
+static void on_sig(int s) { (void)s; g_stop = 1; }
+
+static int ramp(double *x, double target, double step)
+{
+    double d = target - *x;
+    if (fabs(d) <= step) { *x = target; return 1; }
+    *x += (d > 0) ? step : -step;
+    return 0;
+}
+
+/* ---------------- one axis, one cycle ---------------- */
+static void axis_step(axis_t *a, uint8_t *d, int slave_op, int stop_req)
+{
+    uint16_t sw = 0; int32_t apos = 0, avel = 0; int16_t atq = 0; int8_t md = 0;
+    uint16_t cw = CW_SHUTDOWN;
+    int *o = a->off;
+
+    if (o[E_SW]   >= 0) sw   = EC_READ_U16(d + o[E_SW]);
+    if (o[E_APOS] >= 0) apos = EC_READ_S32(d + o[E_APOS]);
+    if (o[E_AVEL] >= 0) avel = EC_READ_S32(d + o[E_AVEL]);
+    if (o[E_ATQ]  >= 0) atq  = EC_READ_S16(d + o[E_ATQ]);
+    if (o[E_MODED]>= 0) md   = EC_READ_S8 (d + o[E_MODED]);
+    a->s_sw = sw; a->s_pos = apos; a->s_vel = avel; a->s_tq = atq; a->s_mode = md;
+
+    /* Defaults every cycle: safe targets (current pos, zero vel, zero torque) */
+    int32_t tpos = apos; int32_t tvel = 0; int16_t ttq = 0;
+    uint16_t s = sw & 0x006F;
+
+    switch (a->phase) {
+    case PH_WAIT_OP:
+        cw = 0x0000;
+        if (slave_op) {
+            a->phase = cfg.monitor ? PH_MONITOR : PH_PREPARE;
+            a->cnt = 0;
+        }
+        break;
+
+    case PH_MONITOR:
+        cw = 0x0000;                 /* never enable in monitor mode */
+        break;
+
+    case PH_PREPARE:                 /* mode is written every cycle; wait for echo */
+        cw = CW_SHUTDOWN;
+        a->cnt++;
+        if (a->cnt > 50 && (o[E_MODED] < 0 || md == cfg.opmode)) {
+            a->phase = PH_ENABLING; a->cnt = 0;
+        } else if (a->cnt > 3000) {
+            fprintf(stderr, "axis: mode_display never became %d\n", cfg.opmode);
+            a->phase = PH_FAULT; a->cnt = 0; g_stop = 1;
+        }
+        break;
+
+    case PH_ENABLING:
+        a->cnt++;
+        if (sw & SW_FAULT) {
+            if (cfg.reset_fault && a->cnt < 2000)
+                cw = ((a->cnt / 50) & 1) ? CW_FAULT_RST : 0x0000; /* edge on bit7 */
+            else { a->phase = PH_FAULT; a->cnt = 0; g_stop = 1; }
+            break;
+        }
+        if ((sw & 0x004F) == 0x0040)      cw = CW_SHUTDOWN;      /* switch-on disabled */
+        else if (s == 0x0021)             cw = CW_SWITCH_ON;     /* ready to switch on */
+        else if (s == 0x0023)             cw = CW_ENABLE;        /* switched on        */
+        else if (s == 0x0027) {                                   /* operation enabled  */
+            cw = CW_ENABLE;
+            a->pos0 = apos; a->tpos_d = apos;
+            a->tvel_d = 0; a->ttq_d = 0; a->run_cycles = 0;
+            a->phase = PH_RUN;
+        } else                            cw = CW_SHUTDOWN;
+        if (a->phase == PH_ENABLING && a->cnt > 5000) {
+            fprintf(stderr, "axis: enable sequence timed out (sw=0x%04x)\n", sw);
+            a->phase = PH_FAULT; a->cnt = 0; g_stop = 1;
+        }
+        break;
+
+    case PH_RUN: {
+        if (s != 0x0027 || (sw & SW_FAULT)) {      /* lost operation-enabled */
+            a->phase = PH_FAULT; a->cnt = 0; g_stop = 1; break;
+        }
+        cw = CW_ENABLE;
+        if (stop_req) { a->phase = PH_STOPPING; a->cnt = 0; }
+        double t = a->run_cycles++ * cycle_s;
+        if (cfg.opmode == OPM_CSP) {
+            double off = (cfg.profile == PRF_SINE)
+                       ? cfg.amp * 0.5 * (1.0 - cos(2.0 * M_PI * t / cfg.period)) : 0.0;
+            double tgt = a->pos0 + off;
+            if (fabs(tgt - a->tpos_d) > cfg.max_step) {
+                fprintf(stderr, "axis: CSP step %.1f > max_step %.1f, aborting\n",
+                        fabs(tgt - a->tpos_d), cfg.max_step);
+                a->phase = PH_STOPPING; a->cnt = 0; g_stop = 1;
+            } else a->tpos_d = tgt;
+            tpos = (int32_t)llround(a->tpos_d);
+        } else if (cfg.opmode == OPM_CSV) {
+            ramp(&a->tvel_d, cfg.vel, cfg.vel_accel * cycle_s);
+            tvel = (int32_t)llround(a->tvel_d);
+        } else {
+            ramp(&a->ttq_d, cfg.tq, cfg.tq_rate * cycle_s);
+            ttq = (int16_t)llround(a->ttq_d);
+        }
+        break;
+    }
+
+    case PH_STOPPING: {
+        int done = 1;
+        cw = CW_ENABLE;
+        if (cfg.opmode == OPM_CSP) {
+            tpos = (int32_t)llround(a->tpos_d);        /* hold last target */
+        } else if (cfg.opmode == OPM_CSV) {
+            done = ramp(&a->tvel_d, 0, cfg.vel_accel * cycle_s);
+            tvel = (int32_t)llround(a->tvel_d);
+        } else {
+            done = ramp(&a->ttq_d, 0, cfg.tq_rate * cycle_s);
+            ttq = (int16_t)llround(a->ttq_d);
+        }
+        if (done) {
+            cw = CW_SHUTDOWN;
+            if (++a->cnt > 100) a->phase = PH_DONE;
+        }
+        if (sw & SW_FAULT) { a->phase = PH_FAULT; a->cnt = 0; }
+        break;
+    }
+
+    case PH_FAULT:
+        a->cnt++;
+        cw = cfg.reset_fault ? (((a->cnt / 50) & 1) ? CW_FAULT_RST : 0) : 0x0000;
+        if (a->cnt > 200) a->phase = PH_DONE;
+        break;
+
+    case PH_DONE:
+        cw = CW_SHUTDOWN;
+        break;
+    }
+
+    /* ---- write outputs ---- */
+    if (o[E_CW]   >= 0) EC_WRITE_U16(d + o[E_CW], cw);
+    if (o[E_MODE] >= 0) EC_WRITE_S8 (d + o[E_MODE], (int8_t)cfg.opmode);
+    if (cfg.opmode == OPM_CSP && o[E_TPOS] >= 0) EC_WRITE_S32(d + o[E_TPOS], tpos);
+    if (cfg.opmode == OPM_CSV && o[E_TVEL] >= 0) EC_WRITE_S32(d + o[E_TVEL], tvel);
+    if (cfg.opmode == OPM_CST && o[E_TTQ]  >= 0) EC_WRITE_S16(d + o[E_TTQ],  ttq);
+}
+
+/* ---------------- monitor thread (non-RT; all printing lives here) ---------------- */
+static void *monitor_thread(void *arg)
+{
+    (void)arg;
+    for (;;) {
+        int all_done = 1;
+        printf("\033[2J\033[H");
+        printf("link=%d  master AL=0x%x  slaves=%d  comm_bad=%d  lat_max=%lld us\n",
+               g_link, g_master_al, g_resp, g_comm_bad, g_lat_max_ns / 1000);
+        for (int i = 0; i < n_ax; i++) {
+            axis_t *a = &ax[i];
+            printf("[%d] %-10s sw=0x%04x md=%2d pos=%11d (%8.2f deg) vel=%8d (%7.2f rpm) tq=%5.1f%%\n",
+                   i, PH_NAME[a->phase], a->s_sw, a->s_mode, a->s_pos,
+                   a->s_pos * 360.0 / COUNTS_PER_REV, a->s_vel,
+                   a->s_vel * 60.0 / COUNTS_PER_REV, a->s_tq / 10.0);
+            if (a->phase != PH_DONE) all_done = 0;
+        }
+        fflush(stdout);
+        if (all_done) break;
+        usleep(250000);
+    }
+    return NULL;
+}
+
+/* ---------------- helpers ---------------- */
+static void usage(const char *p)
+{
+    fprintf(stderr,
+    "usage: %s [options]\n"
+    "  --monitor               observe only, never enable the drives\n"
+    "  --mode csp-hold|csp-sine|csv|cst\n"
+    "  --slaves N              use first N slaves (default: all found)\n"
+    "  --cycle-us N            cycle time (default 1000)\n"
+    "  --amp COUNTS --period S csp-sine amplitude / period\n"
+    "  --vel COUNTS_PER_S      csv target   (--vel-accel, --vel-limit)\n"
+    "  --tq PERMILLE           cst target   (--tq-rate, --tq-limit)\n"
+    "  --max-step COUNTS       CSP slew limit per cycle (default 200)\n"
+    "  --duration S            stop automatically (default: Ctrl-C)\n"
+    "  --no-dc | --dc-assign 0x0300 | --dc-shift NS\n"
+    "  --reset-fault           try bit-7 fault reset during enabling (undocumented!)\n"
+    "  --max-tq-sdo PERMILLE   write 0x6072 before OP (only if object exists)\n"
+    "  --rt-prio N  --cpu N\n", p);
+    exit(1);
+}
+
+static long long now_ns(clockid_t c)
+{ struct timespec t; clock_gettime(c, &t); return t.tv_sec * NSEC + t.tv_nsec; }
+
+int main(int argc, char **argv)
+{
+    for (int i = 1; i < argc; i++) {
+        const char *k = argv[i];
+#define NEXT (++i < argc ? argv[i] : (usage(argv[0]), ""))
+        if (!strcmp(k, "--monitor")) cfg.monitor = 1;
+        else if (!strcmp(k, "--mode")) {
+            const char *m = NEXT;
+            if (!strcmp(m, "csp-hold"))      { cfg.opmode = OPM_CSP; cfg.profile = PRF_HOLD; }
+            else if (!strcmp(m, "csp-sine")) { cfg.opmode = OPM_CSP; cfg.profile = PRF_SINE; }
+            else if (!strcmp(m, "csv"))      cfg.opmode = OPM_CSV;
+            else if (!strcmp(m, "cst"))      cfg.opmode = OPM_CST;
+            else usage(argv[0]);
+        }
+        else if (!strcmp(k, "--slaves"))      cfg.nslaves = atoi(NEXT);
+        else if (!strcmp(k, "--cycle-us"))    cfg.cycle_us = atol(NEXT);
+        else if (!strcmp(k, "--amp"))         cfg.amp = atof(NEXT);
+        else if (!strcmp(k, "--period"))      cfg.period = atof(NEXT);
+        else if (!strcmp(k, "--vel"))         cfg.vel = atof(NEXT);
+        else if (!strcmp(k, "--vel-accel"))   cfg.vel_accel = atof(NEXT);
+        else if (!strcmp(k, "--vel-limit"))   cfg.vel_limit = atof(NEXT);
+        else if (!strcmp(k, "--tq"))          cfg.tq = atof(NEXT);
+        else if (!strcmp(k, "--tq-rate"))     cfg.tq_rate = atof(NEXT);
+        else if (!strcmp(k, "--tq-limit"))    cfg.tq_limit = atof(NEXT);
+        else if (!strcmp(k, "--max-step"))    cfg.max_step = atof(NEXT);
+        else if (!strcmp(k, "--duration"))    cfg.duration = atof(NEXT);
+        else if (!strcmp(k, "--no-dc"))       cfg.use_dc = 0;
+        else if (!strcmp(k, "--dc-assign"))   cfg.dc_assign = strtoul(NEXT, NULL, 0);
+        else if (!strcmp(k, "--dc-shift"))    cfg.dc_shift = atoi(NEXT);
+        else if (!strcmp(k, "--reset-fault")) cfg.reset_fault = 1;
+        else if (!strcmp(k, "--max-tq-sdo"))  cfg.max_tq_sdo = atoi(NEXT);
+        else if (!strcmp(k, "--rt-prio"))     cfg.rt_prio = atoi(NEXT);
+        else if (!strcmp(k, "--cpu"))         cfg.cpu = atoi(NEXT);
+        else usage(argv[0]);
+    }
+    if (cfg.cycle_us < 250) { fprintf(stderr, "cycle too short\n"); return 1; }
+    cycle_s = cfg.cycle_us * 1e-6;
+    unsigned long long cycle_ns = (unsigned long long)cfg.cycle_us * 1000ULL;
+
+    /* ---- refuse unsafe parameters up front ---- */
+    if (fabs(cfg.vel) > cfg.vel_limit) { fprintf(stderr, "--vel exceeds --vel-limit\n"); return 1; }
+    if (fabs(cfg.tq)  > cfg.tq_limit)  { fprintf(stderr, "--tq exceeds --tq-limit\n");  return 1; }
+    if (cfg.opmode == OPM_CSP && cfg.profile == PRF_SINE) {
+        double vpk = fabs(cfg.amp) * M_PI / cfg.period;           /* counts/s peak */
+        if (cfg.period <= 0 || vpk * cycle_s > cfg.max_step) {
+            fprintf(stderr, "csp-sine too fast: peak step %.1f counts/cycle > max_step %.1f\n",
+                    vpk * cycle_s, cfg.max_step);
+            return 1;
+        }
+    }
+
+    mlockall(MCL_CURRENT | MCL_FUTURE);
+
+    /* ---- 1. request master, wait for the bus scan ---- */
+    master = ecrt_request_master(0);
+    if (!master) { fprintf(stderr, "cannot request master 0 (is the ethercat service running / another app holding it?)\n"); return 1; }
+
+    ec_master_info_t mi;
+    for (int t = 0; t < 200; t++) {
+        if (ecrt_master(master, &mi) == 0 && !mi.scan_busy && mi.slave_count > 0) break;
+        usleep(50000);
+    }
+    if (ecrt_master(master, &mi) || !mi.link_up || mi.slave_count == 0) {
+        fprintf(stderr, "no link or no slaves found\n"); ecrt_release_master(master); return 1;
+    }
+    n_ax = mi.slave_count;
+    if (cfg.nslaves > 0 && cfg.nslaves < n_ax) n_ax = cfg.nslaves;
+    if (n_ax > MAX_AX) n_ax = MAX_AX;
+
+    domain = ecrt_master_create_domain(master);
+    if (!domain) { fprintf(stderr, "domain create failed\n"); return 1; }
+
+    /* ---- 2. configure every slave ---- */
+    for (int i = 0; i < n_ax; i++) {
+        axis_t *a = &ax[i];
+        ec_slave_info_t si;
+        if (ecrt_master_get_slave(master, i, &si)) { fprintf(stderr, "get_slave(%d) failed\n", i); return 1; }
+        a->vendor = si.vendor_id; a->product = si.product_code;
+        snprintf(a->name, sizeof a->name, "%s", si.name);
+        printf("slave %d: \"%s\" vendor=0x%08x product=0x%08x rev=0x%08x\n",
+               i, si.name, si.vendor_id, si.product_code, si.revision_number);
+
+        a->sc = ecrt_master_slave_config(master, 0, i, a->vendor, a->product);
+        if (!a->sc) { fprintf(stderr, "slave_config(%d) failed\n", i); return 1; }
+#ifdef USE_CUSTOM_PDO
+        if (ecrt_slave_config_pdos(a->sc, EC_END, syncs)) { fprintf(stderr, "config_pdos failed\n"); return 1; }
+#endif
+        for (int e = 0; e < E_N; e++) {
+            unsigned bp = 0;
+            int r = ecrt_slave_config_reg_pdo_entry(a->sc, ENT[e].idx, ENT[e].sub, domain, &bp);
+            a->off[e] = (r >= 0 && bp == 0) ? r : -1;
+        }
+        /* mandatory entries per mode */
+        int ok = a->off[E_CW] >= 0 && a->off[E_SW] >= 0;
+        if (cfg.opmode == OPM_CSP) ok = ok && a->off[E_TPOS] >= 0 && a->off[E_APOS] >= 0;
+        if (cfg.opmode == OPM_CSV) ok = ok && a->off[E_TVEL] >= 0;
+        if (cfg.opmode == OPM_CST) ok = ok && a->off[E_TTQ]  >= 0;
+        if (!ok) {
+            fprintf(stderr, "slave %d: required PDO entries are not in its current mapping.\n"
+                    "  run: ethercat pdos -p %d   and compare with ENT[] / try -DUSE_CUSTOM_PDO\n", i, i);
+            for (int e = 0; e < E_N; e++)
+                fprintf(stderr, "    %-18s 0x%04x : %s\n", ENT[e].name, ENT[e].idx,
+                        a->off[e] >= 0 ? "mapped" : "MISSING");
+            ecrt_release_master(master); return 1;
+        }
+        /* mode not in PDO -> fall back to a one-time SDO write at PREOP->SAFEOP */
+        if (a->off[E_MODE] < 0 && !cfg.monitor)
+            ecrt_slave_config_sdo8(a->sc, 0x6060, 0, (uint8_t)cfg.opmode);
+        if (cfg.max_tq_sdo > 0)
+            ecrt_slave_config_sdo16(a->sc, 0x6072, 0, (uint16_t)cfg.max_tq_sdo);
+        if (cfg.use_dc)
+            ecrt_slave_config_dc(a->sc, cfg.dc_assign, (uint32_t)cycle_ns, cfg.dc_shift, 0, 0);
+        a->phase = PH_WAIT_OP;
+    }
+
+    /* ---- 3. activate ---- */
+    ecrt_master_application_time(master, now_ns(CLOCK_MONOTONIC));
+    if (ecrt_master_activate(master)) { fprintf(stderr, "activate failed\n"); return 1; }
+    dom_data = ecrt_domain_data(domain);
+    if (!dom_data) { fprintf(stderr, "no domain data\n"); return 1; }
+
+    /* ---- 4. real-time setup ---- */
+    signal(SIGINT, on_sig); signal(SIGTERM, on_sig);
+    struct sched_param sp = { .sched_priority = cfg.rt_prio };
+    if (sched_setscheduler(0, SCHED_FIFO, &sp))
+        fprintf(stderr, "warning: SCHED_FIFO failed (%s) - run as root for real-time\n", strerror(errno));
+    if (cfg.cpu >= 0) {
+        cpu_set_t cs; CPU_ZERO(&cs); CPU_SET(cfg.cpu, &cs);
+        sched_setaffinity(0, sizeof cs, &cs);
+    }
+    pthread_t mon; pthread_attr_t pa; pthread_attr_init(&pa);
+    pthread_attr_setinheritsched(&pa, PTHREAD_EXPLICIT_SCHED);
+    struct sched_param sp0 = { .sched_priority = 0 };
+    pthread_attr_setschedpolicy(&pa, SCHED_OTHER);
+    pthread_attr_setschedparam(&pa, &sp0);
+    pthread_create(&mon, &pa, monitor_thread, NULL);
+
+    /* ---- 5. cyclic loop ---- */
+    struct timespec wake; clock_gettime(CLOCK_MONOTONIC, &wake);
+    long long t_start = now_ns(CLOCK_MONOTONIC);
+    unsigned long cyc = 0;
+    int all_done = 0;
+
+    while (!all_done) {
+        wake.tv_nsec += cycle_ns;
+        while (wake.tv_nsec >= NSEC) { wake.tv_nsec -= NSEC; wake.tv_sec++; }
+        clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME, &wake, NULL);
+        long long lat = now_ns(CLOCK_MONOTONIC) - ((long long)wake.tv_sec * NSEC + wake.tv_nsec);
+        if (lat > g_lat_max_ns) g_lat_max_ns = lat;
+
+        ecrt_master_receive(master);
+        ecrt_domain_process(domain);
+
+        ec_domain_state_t ds; ecrt_domain_state(domain, &ds);
+        if (ds.wc_state == EC_WC_COMPLETE) g_comm_bad = 0; else g_comm_bad++;
+
+        if ((cyc % 100) == 0) {
+            ec_master_state_t ms; ecrt_master_state(master, &ms);
+            g_master_al = ms.al_states; g_resp = ms.slaves_responding; g_link = ms.link_up;
+        }
+
+        if (cfg.duration > 0 && (now_ns(CLOCK_MONOTONIC) - t_start) > (long long)(cfg.duration * 1e9))
+            g_stop = 1;
+        if (g_comm_bad > 50 && !cfg.monitor) g_stop = 1;       /* lost the bus: start stopping */
+
+        all_done = 1;
+        for (int i = 0; i < n_ax; i++) {
+            ec_slave_config_state_t st; ecrt_slave_config_state(ax[i].sc, &st);
+            int op = st.operational && ds.wc_state == EC_WC_COMPLETE;
+            if (cfg.monitor && g_stop) ax[i].phase = PH_DONE;
+            axis_step(&ax[i], dom_data, op, g_stop);
+            if (ax[i].phase != PH_DONE) all_done = 0;
+        }
+
+        ecrt_domain_queue(domain);
+        if (cfg.use_dc) {
+            ecrt_master_application_time(master, now_ns(CLOCK_MONOTONIC));
+            ecrt_master_sync_reference_clock(master);
+            ecrt_master_sync_slave_clocks(master);
+        }
+        ecrt_master_send(master);
+        cyc++;
+    }
+
+    pthread_join(mon, NULL);
+    ecrt_release_master(master);       /* slaves drop to INIT/PREOP; SM watchdog protects meanwhile */
+    printf("\ndone.\n");
+    return 0;
+}
+
+EtherCAT diagnostic analysis
+Your output shows that the EtherCAT slave is detected and communication eventually recovers, but the motor application is not consistently receiving valid process data.
+The important observations are:
+Parameter	
+Observed	
+Meaning
+link	
+1	
+Physical Ethernet link is up
+slaves	
+1	
+One EtherCAT slave detected
+master AL	
+0x2 then 0x8	
+Master reports changing AL state
+comm_bad	
+750–2000	
+Repeated incomplete domain working-counter cycles
+sw	
+0x0000, then 0x0210	
+Initially no valid statusword, later a statusword is received
+md	
+0, then 9	
+Drive eventually reports CSV mode
+pos	
+61193	
+Actual position is eventually readable
+phase	
+WAIT_OP → PREPARE → DONE	
+Application progresses through its state machine
+The most important issue is comm_bad. A physical link being up does not mean EtherCAT process-data communication is healthy.
+There is also an important distinction: DONE means your application reached its terminal state; it does not necessarily mean the motor successfully entered Operation Enabled.
+1. Main bug in your C code
+This condition is likely causing the premature shutdown:
+
+c
+if (g_comm_bad > 50 && !cfg.monitor)
+    g_stop = 1;
+Your startup sequence appears to be:
+EtherCAT master starts in PREOP (AL=0x2).
+Process-data working counter is incomplete.
+comm_bad increases beyond 50.
+g_stop becomes 1.
+EtherCAT communication eventually recovers.
+Master enters OP (AL=0x8).
+The drive reports statusword 0x1231 and mode 9.
+The application progresses, but the stop request is already latched.
+Important: g_stop is never automatically cleared when communication recovers.
+This explains why comm_bad can return to zero while the application still shuts down.
+2. What statusword 0x1231 tells us
+The relevant CiA 402 status bits are:
+
+text
+Statusword = 0x1231
+Masked     = 0x1231 & 0x006F
+           = 0x0021
+0x0021 corresponds to Ready to Switch On.
+It does not indicate Operation Enabled.
+Also:
+md=9 means CSV (Cyclic Synchronous Velocity).
+md=9 does not prove the drive is enabled.
+DONE does not prove successful motor operation.
+3. What I recommend checking next
+Before attempting any motor movement, keep the application in monitor-only mode and establish stable EtherCAT communication.
+Run:
+
+bash
+sudo ethercat master
+sudo ethercat slaves -v
+sudo ethercat pdos -p 0
+Then inspect:
+
+bash
+sudo ethercat states
+Also collect the following information:
+bringup_out.txt
+Complete output of ethercat master
+Complete output of ethercat slaves -v
+PDO mapping for slave 0
+The exact MyActuator RMD-X EtherCAT model
+4. One important question
+Your output shows:
+
+text
+md=9
+But your C program defaults to:
+
+c
+.opmode = OPM_CSP
+where:
+
+c
+enum { OPM_CSP = 8, OPM_CSV = 9, OPM_CST = 10 };
+Which mode are you actually trying to use?
+CSP (position control)
+CSV (velocity control)
+CST (torque control)
+I can then help isolate the startup-state and communication problems without prematurely enabling the motor.
+
+sudo ethercat master
+sudo ethercat slaves -v
+sudo ethercat pdos -p 0
+Master0
+  Phase: Operation
+  Active: yes
+  Slaves: 1
+  Ethernet devices:
+    Main: c0:74:2b:f8:74:a1 (attached)
+      Link: UP
+      Tx frames:   392949
+      Tx bytes:    30133160
+      Rx frames:   392948
+      Rx bytes:    30133054
+      Tx errors:   0
+      Tx frame rate [1/s]:   1000   1000    958
+      Tx rate [KByte/s]:     95.4   95.3   90.5
+      Rx frame rate [1/s]:   1000   1000    958
+      Rx rate [KByte/s]:     95.4   95.3   90.5
+    Common:
+      Tx frames:   392949
+      Tx bytes:    30133160
+      Rx frames:   392948
+      Rx bytes:    30133054
+      Lost frames: 0
+      Tx frame rate [1/s]:   1000   1000    958
+      Tx rate [KByte/s]:     95.4   95.3   90.5
+      Rx frame rate [1/s]:   1000   1000    958
+      Rx rate [KByte/s]:     95.4   95.3   90.5
+      Loss rate [1/s]:          0      0      0
+      Frame loss [%]:         0.0    0.0    0.0
+  Distributed clocks:
+    Reference clock:   Slave 0
+    DC reference time: 680246959098
+    Application time:  831400046789
+                       2000-01-01 00:13:51.400046789
+=== Master 0, Slave 0 ===
+Device: Main
+State: INIT
+Flag: E
+Identity:
+  Vendor Id:       0x00202008
+  Product code:    0x00000000
+  Revision number: 0x00010000
+  Serial number:   0x00000000
+DL information:
+  FMMU bit operation: no
+  Distributed clocks: yes, 64 bit
+  DC system time transmission delay: 0 ns
+Port  Type  Link  Loop    Signal  NextSlave  RxTime [ns]  Diff [ns]   NextDc [ns]
+   0  MII   up    open    yes             -   1537179601           0           0
+   1  MII   down  closed  no              -            -           -           -
+   2  N/A   down  closed  no              -            -           -           -
+   3  N/A   down  closed  no              -            -           -           -
+Mailboxes:
+  Bootstrap RX: 0x0000/0, TX: 0x0000/0
+  Standard  RX: 0x1000/128, TX: 0x1080/128
+  Supported protocols: CoE, FoE
+General:
+  Group: MT_Device
+  Image name: 
+  Order number: MT_Device
+  Device name: MT_Device
+  CoE details:
+    Enable SDO: yes
+    Enable SDO Info: yes
+    Enable PDO Assign: yes
+    Enable PDO Configuration: yes
+    Enable Upload at startup: no
+    Enable SDO complete access: yes
+  Flags:
+    Enable SafeOp: no
+    Enable notLRW: no
+  Current consumption: 0 mA
+SM0: PhysAddr 0x1000, DefaultSize  128, ControlRegister 0x26, Enable 1
+SM1: PhysAddr 0x1080, DefaultSize  128, ControlRegister 0x22, Enable 1
+SM2: PhysAddr 0x1100, DefaultSize   16, ControlRegister 0x64, Enable 1
+  RxPDO 0x1600 "RCV PDO Mapping0"
+    PDO entry 0x6040:00, 16 bit, "control word"
+    PDO entry 0x607a:00, 32 bit, "target position"
+    PDO entry 0x60ff:00, 32 bit, "target velocity"
+    PDO entry 0x6071:00, 16 bit, "Target Torque"
+    PDO entry 0x6072:00, 16 bit, "Max Torque"
+    PDO entry 0x6060:00,  8 bit, "modes of operation"
+    PDO entry 0x2ffd:00,  8 bit, "Dummy Byte1"
+SM3: PhysAddr 0x1400, DefaultSize   16, ControlRegister 0x20, Enable 1
+  TxPDO 0x1a00 "SND PDO Mapping0"
+    PDO entry 0x6041:00, 16 bit, "status word"
+    PDO entry 0x6064:00, 32 bit, "position actual value"
+    PDO entry 0x606c:00, 32 bit, "velocity actual value"
+    PDO entry 0x6077:00, 16 bit, "torque actual value"
+    PDO entry 0x603f:00, 16 bit, "Error Code"
+    PDO entry 0x6061:00,  8 bit, "modes of operation display"
+    PDO entry 0x2ffe:00,  8 bit, "Dummy Byte2"
+
+Your latest output is very useful. We can now identify an important configuration mismatch.
+1. EtherCAT communication and PDO mapping
+Physical
+link
+healthy
+ 
+PDO
+mapping
+detected
+Your master reports:
+Master Phase: Operation
+Active: yes
+Link: UP
+Lost frames: 0
+Transmit rate: approximately 1000 frames/s
+Receive rate: approximately 1000 frames/s
+One EtherCAT slave detected
+Distributed clocks supported
+Your drive exposes the expected CiA 402 PDO objects.
+2. Your actual PDO mapping
+The drive's RxPDO (master → drive) is:
+Object	
+Description	
+Size
+0x6040	
+Controlword	
+16
+0x607A	
+Target position	
+32
+0x60FF	
+Target velocity	
+32
+0x6071	
+Target torque	
+16
+0x6072	
+Maximum torque	
+16
+0x6060	
+Operation mode	
+8
+0x2FFD	
+Dummy byte	
+8
+The TxPDO (drive → master) is:
+Object	
+Description	
+Size
+0x6041	
+Statusword	
+16
+0x6064	
+Actual position	
+32
+0x606C	
+Actual velocity	
+32
+0x6077	
+Actual torque	
+16
+0x603F	
+Error code	
+16
+0x6061	
+Mode display	
+8
+0x2FFE	
+Dummy byte	
+8
+Good news: Your existing ENT[] entries match the actual mapped PDO objects. The drive already has the standard PDO mapping you need. You should not need USE_CUSTOM_PDO.
+3. Important issue: Slave is currently in INIT
+Your output says:
+
+text
+=== Master 0, Slave 0 ===
+State: INIT
+This is the biggest issue to investigate.
+The master being in Phase: Operation does not mean the slave is in EtherCAT OP state.
+The normal EtherCAT state progression is:
+INIT
+Current reported state
+PREOP — Mailbox communication
+SAFEOP — Process data synchronization
+OP — Operational process data
+One qualification: your program calls ecrt_release_master() when it exits. This can cause the slave to return to INIT. Therefore, the reported INIT state may simply be the state after your application has stopped.
+We need to inspect the slave while your application is running.
+4. Another important issue: Your C code does not register all PDO entries
+Your existing code registers ten objects, but your drive exposes additional entries:
+0x6072 maximum torque
+0x603F error code
+0x2FFD dummy byte
+0x2FFE dummy byte
+The first two are useful diagnostic objects. The dummy bytes are not required for your current control logic, but they are part of the PDO mapping.
+Do not change the PDO mapping yet. First establish whether the existing domain reaches a complete working counter.
+5. Run these diagnostic commands
+Start your application in monitor mode:
+
+bash
+sudo ./myact_ctl --monitor
+In another terminal, while it is running:
+
+bash
+sudo ethercat master
+sudo ethercat slaves -v
+sudo ethercat pdos -p 0
+Also read the drive error code:
+
+bash
+sudo ethercat upload -p 0 0x603F 0 --type uint16
+This is a read-only SDO request.
+6. One code correction I recommend
+Your current communication watchdog counts incomplete working-counter cycles even during startup:
+
+c
+if (ds.wc_state == EC_WC_COMPLETE)
+    g_comm_bad = 0;
+else
+    g_comm_bad++;
+Then:
+
+c
+if (g_comm_bad > 50 && !cfg.monitor)
+    g_stop = 1;
+This can incorrectly treat normal startup transitions as communication failure.
+At minimum, don't declare communication failure until the slave has first reached OP and had time to establish its process-data exchange. Keep a separate startup timeout rather than treating every incomplete startup cycle as a bus failure.
+7. Please confirm these three things
+Are you using MyActuator RMD-X EtherCAT E-series?
+Do you want CSP position control (mode 8), CSV velocity control (mode 9), or CST torque control (mode 10)?
+Does ethercat slaves -v show INIT while myact_ctl is actively running, or only after it prints done?
+The third answer is particularly important. It will tell us whether we're dealing with a genuine EtherCAT state-transition problem or simply the expected state after releasing the master.
+
+sudo ./myact_ctl --monitor
+Failed to reserve master: Device or resource busy
+cannot request master 0 (is the ethercat service running / another app holding it?)
+
+This error means another process already owns EtherCAT Master 0.
+
+text
+Failed to reserve master: Device or resource busy
+cannot request master 0
+IGH EtherCAT master generally allows only one application to reserve a master at a time.
+1. Find the process holding EtherCAT
+Run:
+
+bash
+sudo ethercat master
+Then:
+
+bash
+sudo lsof /dev/EtherCAT0
+If lsof doesn't show anything:
+
+bash
+sudo fuser -v /dev/EtherCAT0
+Also check:
+
+bash
+ps aux | grep -E 'ethercat|myact_ctl' | grep -v grep
+2. Stop the competing application
+If an old myact_ctl process is running:
+
+bash
+sudo pkill -SIGINT myact_ctl
+Wait a few seconds and verify:
+
+bash
+ps aux | grep myact_ctl
+If another EtherCAT application is holding the master, stop it cleanly before proceeding.
+Do not kill the EtherCAT kernel master module or unload its driver.
+3. Start monitor mode again
+
+bash
+sudo ./myact_ctl --monitor
+In another terminal:
+
+bash
+sudo ethercat slaves -v
+4. Important distinction
+Your application calls:
+
+c
+master = ecrt_request_master(0);
+This reserves Master 0 exclusively.
+Therefore:
+ethercat master can generally inspect the master.
+ethercat slaves can generally inspect slaves.
+Another application calling ecrt_request_master(0) cannot reserve the same master simultaneously.
+5. Send me this output
+Run:
+
+bash
+sudo fuser -v /dev/EtherCAT0
+This will help identify exactly which process is holding the EtherCAT master.
+Then we can resolve the ownership conflict without changing your PDO configuration or motor-control code.
+
+Device or resource busy
+cannot request master 0 (is the ethercat service running / another app holding it?)
+
+This error confirms that IGH EtherCAT Master 0 is already reserved by another application, or a previous application has not released it.
+Let's identify the owner before changing anything.
+Step 1. Find who is holding EtherCAT
+Run:
+
+bash
+sudo fuser -v /dev/EtherCAT0
+Also run:
+
+bash
+sudo ps aux | grep -E 'ethercat|myact_ctl' | grep -v grep
+Step 2. Check the EtherCAT device
+
+bash
+ls -l /dev/EtherCAT*
+Step 3. If an old myact_ctl process is running
+Stop it gracefully:
+
+bash
+sudo pkill -SIGINT myact_ctl
+sleep 2
+Then retry:
+
+bash
+sudo ./myact_ctl --monitor
+Do not stop or unload the EtherCAT kernel driver.
+Step 4. Send me these three outputs
+
+bash
+sudo fuser -v /dev/EtherCAT0
+
+bash
+ps aux | grep -E 'ethercat|myact_ctl' | grep -v grep
+
+bash
+sudo ethercat master
+Important: Don't modify the PDO mapping, DC settings, or motor-control code yet. First we need to resolve master ownership.
+
+sudo lsof /dev/EtherCAT0
+COMMAND    PID   USER   FD   TYPE DEVICE SIZE/OFF NODE NAME
+myact_ctl 5081 raybot  mem    CHR  507,0           736 /dev/EtherCAT0
+myact_ctl 5081 raybot    3u   CHR  507,0      0t0  736 /dev/EtherCAT0
+raybot@raybot:~/myact_ctl$ sudo pkill -SIGINT myact_ctl
+raybot@raybot:~/myact_ctl$ ps aux | grep myact_ctl
+raybot      3847  0.8  0.3 573544 56732 ?        Sl   18:12   0:05 geany /home/raybot/myact_ctl/bringup.sh
+raybot      5081  2.2  0.0  11196 10784 ?        SLl  18:17   0:07 /home/raybot/myact_ctl/myact_ctl
+raybot      5708  0.0  0.0  19836  1996 pts/0    S+   18:23   0:00 grep --color=auto myact_ctl
+raybot@raybot:~/myact_ctl$ sudo ./myact_ctl --monitor
+Failed to reserve master: Device or resource busy
+cannot request master 0 (is the ethercat service running / another app holding it?)
+raybot@raybot:~/myact_ctl$ ^C
+raybot@raybot:~/myact_ctl$ sudo fuser -v /dev/EtherCAT0
+                     USER        PID ACCESS COMMAND
+/dev/EtherCAT0:      raybot     5081 F...m myact_ctl
+raybot@raybot:~/myact_ctl$ sudo ps aux | grep -E 'ethercat|myact_ctl' | grep -v grep
+raybot      3847  0.7  0.3 573544 56732 ?        Sl   18:12   0:05 geany /home/raybot/myact_ctl/bringup.sh
+raybot      5081  2.2  0.0  11196 10784 ?        SLl  18:17   0:08 /home/raybot/myact_ctl/myact_ctl
+raybot@raybot:~/myact_ctl$ ls -l /dev/EtherCAT*
+crw-rw---- 1 root ethercat 507, 0 Nov  3 22:40 /dev/EtherCAT0
+
+We found the exact problem. Your previous myact_ctl process is still running and holding EtherCAT Master 0.
+Master 0 occupied
+Your output identifies:
+
+text
+PID:     5081
+USER:    raybot
+PROCESS: myact_ctl
+DEVICE:  /dev/EtherCAT0
+1. Stop the existing process
+SIGINT did not terminate it. First try SIGTERM:
+
+bash
+sudo kill -TERM 5081
+sleep 3
+Check whether it exited:
+
+bash
+ps -p 5081 -o pid,stat,cmd
+If it is still running, use:
+
+bash
+sudo kill -KILL 5081
+This is a last resort because it prevents the application from performing its normal shutdown.
+2. Confirm EtherCAT is released
+
+bash
+sudo lsof /dev/EtherCAT0
+Expected result: no output.
+Also:
+
+bash
+sudo fuser -v /dev/EtherCAT0
+Expected result: no process listed.
+3. Start monitor mode
+Now run:
+
+bash
+sudo ./myact_ctl --monitor
+4. Important: Fix your application shutdown
+Your C program has this shutdown sequence:
+
+c
+pthread_join(mon, NULL);
+ecrt_release_master(master);
+printf("\ndone.\n");
+But your monitor thread can wait indefinitely if the application never reaches PH_DONE.
+Also, your PH_WAIT_OP transition and communication timeout logic deserve attention.
+I recommend fixing the signal-handling and shutdown sequence after we recover master access.
+5. Send me the next output
+Please run:
+
+bash
+sudo ./myact_ctl --monitor
+I particularly want to see whether it now displays:
+
+text
+link=1
+master AL=0x8
+slaves=1
+comm_bad=0
+That will help us determine whether the remaining issue is EtherCAT state transition or PDO communication.
+
+link=1  master AL=0x1  slaves=1  comm_bad=10104  lat_max=13 us
+[0] DONE       sw=0x0000 md= 0 pos=          0 (    0.00 deg) vel=       0 (   0.00 rpm) tq=  0.0%
+
+done.
+
+This output reveals a new problem. Your application starts, reserves the EtherCAT master, but the slave never establishes valid process-data communication.
+1. Interpret the output
+
+text
+link=1
+master AL=0x1
+slaves=1
+comm_bad=10104
+lat_max=13 us
+
+[0] DONE
+sw=0x0000
+md=0
+pos=0
+Parameter	
+Meaning
+link=1	
+Ethernet link is physically connected
+AL=0x1	
+Master reports INIT state
+slaves=1	
+Slave is detected
+comm_bad=10104	
+Domain working counter is repeatedly incomplete
+lat_max=13 us	
+Scheduling latency is relatively low
+sw=0x0000	
+No valid statusword received
+md=0	
+No valid mode feedback
+DONE	
+Application has terminated its state machine
+The primary problem is that the slave is not reaching OP.
+2. Important bug in your C program
+Your monitor mode currently contains:
+
+c
+if (cfg.monitor && g_stop)
+    ax[i].phase = PH_DONE;
+But g_stop can be set by your communication watchdog:
+
+c
+if (g_comm_bad > 50 && !cfg.monitor)
+    g_stop = 1;
+That particular watchdog is disabled in monitor mode, so we need to investigate other reasons for DONE, including whether the program is receiving SIGINT or another signal.
+There is also a more important issue: your application currently does not print the actual slave state and domain working-counter value during startup.
+3. Add these diagnostic prints
+Find this code:
+
+c
+ec_domain_state_t ds;
+ecrt_domain_state(domain, &ds);
+Immediately after it, add:
+
+c
+if ((cyc % 1000) == 0) {
+    ec_master_state_t ms;
+    ecrt_master_state(master, &ms);
+
+    printf(
+        "DEBUG: master_AL=0x%x responding=%u link=%u "
+        "WC=%u WC_state=%u comm_bad=%d\n",
+        ms.al_states,
+        ms.slaves_responding,
+        ms.link_up,
+        ds.working_counter,
+        ds.wc_state,
+        g_comm_bad
+    );
+    fflush(stdout);
+}
+This will help distinguish between a master state problem and an incomplete PDO working counter.
+4. Check the slave independently
+After your application exits, run:
+
+bash
+sudo ethercat slaves -v
+Then:
+
+bash
+sudo ethercat states
+And:
+
+bash
+sudo ethercat master
+5. One critical question
+Your earlier output showed:
+
+text
+master AL=0x8
+[0] DONE
+sw=0x1231
+md=9
+Your latest output shows:
+
+text
+master AL=0x1
+[0] DONE
+sw=0x0000
+md=0
+These are substantially different states.
+Did you change anything in myact_ctl.c, the Makefile, or the EtherCAT configuration between these two runs?
+Please also send the output of:
+
+bash
+sudo ethercat states
+I would not attempt motor enable, CSP movement, or torque commands until the slave reliably reaches OP and the domain working counter becomes complete.
+
+/*
+ * myact_ctl.c  -  Minimal IgH EtherCAT master application for MyActuator
+ *                 RMD-X (EtherCAT "E" variants) on the Cerebellum board.
+ *
+ * Modes (CiA 402 cyclic synchronous, as documented by MyActuator):
+ *   csp-hold  : hold the position the motor had when enabled
+ *   csp-sine  : smooth 0 -> amp -> 0 cosine move, repeated (position)
+ *   csv       : ramp to a constant velocity (counts/s)
+ *   cst       : ramp to a constant torque   (per-mille of rated current)
+ *
+ * Safety features: everything is armed with zero/current-position targets,
+ * ramped, limit-checked, and ramped down on Ctrl-C.  Use --monitor first.
+ *
+ * Build:  make            (see Makefile)
+ * Run  :  sudo ./myact_ctl --monitor
+ *         sudo ./myact_ctl --mode csp-sine --amp 5000 --period 4
+ *
+ * ASSUMPTIONS you must verify on your drive (see bringup.sh):
+ *   - the default PDO mapping contains the entries listed in ENT[] below
+ *     (otherwise build with -DUSE_CUSTOM_PDO and check 0x1600/0x1A00)
+ *   - DC AssignActivate (--dc-assign) matches the ESI file
+ */
+#define _GNU_SOURCE
+#include <stdio.h>
+#include <stdlib.h>
+#include <stdint.h>
+#include <string.h>
+#include <math.h>
+#include <time.h>
+#include <signal.h>
+#include <sched.h>
+#include <pthread.h>
+#include <unistd.h>
+#include <errno.h>
+#include <sys/mman.h>
+#include <ecrt.h>
+
+#define MAX_AX        16
+#define NSEC          1000000000LL
+#define COUNTS_PER_REV 131072.0   /* 17-bit output encoder (verify!) */
+
+/* ---------------- CiA 402 constants ---------------- */
+#define CW_SHUTDOWN   0x0006
+#define CW_SWITCH_ON  0x0007
+#define CW_ENABLE     0x000F
+#define CW_FAULT_RST  0x0080
+#define SW_FAULT      0x0008
+
+enum { OPM_CSP = 8, OPM_CSV = 9, OPM_CST = 10 };
+
+/* ---------------- PDO entries we want ---------------- */
+enum { E_CW, E_MODE, E_TPOS, E_TVEL, E_TTQ,
+       E_SW, E_MODED, E_APOS, E_AVEL, E_ATQ, E_N };
+
+static const struct { uint16_t idx; uint8_t sub; const char *name; } ENT[E_N] = {
+    {0x6040, 0, "controlword"},   {0x6060, 0, "mode_of_operation"},
+    {0x607A, 0, "target_position"}, {0x60FF, 0, "target_velocity"},
+    {0x6071, 0, "target_torque"},
+    {0x6041, 0, "statusword"},    {0x6061, 0, "mode_display"},
+    {0x6064, 0, "actual_position"}, {0x606C, 0, "actual_velocity"},
+    {0x6077, 0, "actual_torque"},
+};
+
+#ifdef USE_CUSTOM_PDO
+/* Only use if the drive really supports configurable PDOs at 0x1600/0x1A00.
+ * Verify with:  ethercat sdos -p 0  |  grep -E "0x1600|0x1A00|0x1C12|0x1C13" */
+static ec_pdo_entry_info_t rx_entries[] = {
+    {0x6040, 0, 16}, {0x6060, 0, 8}, {0x607A, 0, 32}, {0x60FF, 0, 32}, {0x6071, 0, 16}};
+static ec_pdo_entry_info_t tx_entries[] = {
+    {0x6041, 0, 16}, {0x6061, 0, 8}, {0x6064, 0, 32}, {0x606C, 0, 32}, {0x6077, 0, 16}};
+static ec_pdo_info_t pdos[] = {{0x1600, 5, rx_entries}, {0x1A00, 5, tx_entries}};
+static ec_sync_info_t syncs[] = {
+    {0, EC_DIR_OUTPUT, 0, NULL, EC_WD_DISABLE},
+    {1, EC_DIR_INPUT,  0, NULL, EC_WD_DISABLE},
+    {2, EC_DIR_OUTPUT, 1, pdos + 0, EC_WD_ENABLE},
+    {3, EC_DIR_INPUT,  1, pdos + 1, EC_WD_DISABLE},
+    {0xff}};
+#endif
+
+/* ---------------- configuration (command line) ---------------- */
+typedef enum { PRF_HOLD, PRF_SINE } prf_t;
+static struct {
+    int      opmode;          /* 8/9/10 */
+    prf_t    profile;
+    int      monitor;         /* no enable, only observe */
+    int      nslaves;         /* 0 = all found */
+    long     cycle_us;
+    double   amp;             /* counts */
+    double   period;          /* s */
+    double   vel;             /* counts/s */
+    double   vel_accel;       /* counts/s^2 */
+    double   vel_limit;       /* counts/s */
+    double   tq;              /* per-mille of rated */
+    double   tq_rate;         /* per-mille per s */
+    double   tq_limit;        /* per-mille */
+    double   max_step;        /* counts per cycle (CSP slew limit) */
+    double   duration;        /* s, 0 = until Ctrl-C */
+    int      use_dc;
+    unsigned dc_assign;
+    int      dc_shift;
+    int      reset_fault;
+    int      max_tq_sdo;      /* 0 = do not write 0x6072 */
+    int      rt_prio;
+    int      cpu;
+} cfg = {
+    .opmode = OPM_CSP, .profile = PRF_HOLD, .monitor = 0, .nslaves = 0,
+    .cycle_us = 1000, .amp = 0, .period = 4.0, .vel = 0, .vel_accel = 131072,
+    .vel_limit = 262144, .tq = 0, .tq_rate = 200, .tq_limit = 200,
+    .max_step = 200, .duration = 0, .use_dc = 1, .dc_assign = 0x0300,
+    .dc_shift = 0, .reset_fault = 0, .max_tq_sdo = 0, .rt_prio = 80, .cpu = -1,
+};
+
+/* ---------------- state ---------------- */
+typedef enum { PH_WAIT_OP, PH_MONITOR, PH_PREPARE, PH_ENABLING, PH_RUN,
+               PH_STOPPING, PH_DONE, PH_FAULT } phase_t;
+static const char *PH_NAME[] = {"WAIT_OP", "MONITOR", "PREPARE", "ENABLING",
+                                "RUN", "STOPPING", "DONE", "FAULT"};
+
+typedef struct {
+    ec_slave_config_t *sc;
+    uint32_t vendor, product;
+    char     name[64];
+    int      off[E_N];       /* byte offsets in domain, -1 = not mapped */
+    phase_t  phase;
+    unsigned cnt;            /* generic per-phase cycle counter */
+    unsigned run_cycles;
+    int32_t  pos0;
+    double   tpos_d, tvel_d, ttq_d;
+    /* snapshot for the monitor thread */
+    volatile uint16_t s_sw;
+    volatile int32_t  s_pos, s_vel;
+    volatile int16_t  s_tq;
+    volatile int8_t   s_mode;
+} axis_t;
+
+static axis_t   ax[MAX_AX];
+static int      n_ax;
+static ec_master_t *master;
+static ec_domain_t *domain;
+static uint8_t *dom_data;
+static volatile sig_atomic_t g_stop;
+static volatile int g_comm_bad, g_master_al, g_resp, g_link;
+static volatile long long g_lat_max_ns;
+static double cycle_s;
+
+static void on_sig(int s) { (void)s; g_stop = 1; }
+
+static int ramp(double *x, double target, double step)
+{
+    double d = target - *x;
+    if (fabs(d) <= step) { *x = target; return 1; }
+    *x += (d > 0) ? step : -step;
+    return 0;
+}
+
+/* ---------------- one axis, one cycle ---------------- */
+static void axis_step(axis_t *a, uint8_t *d, int slave_op, int stop_req)
+{
+    uint16_t sw = 0; int32_t apos = 0, avel = 0; int16_t atq = 0; int8_t md = 0;
+    uint16_t cw = CW_SHUTDOWN;
+    int *o = a->off;
+
+    if (o[E_SW]   >= 0) sw   = EC_READ_U16(d + o[E_SW]);
+    if (o[E_APOS] >= 0) apos = EC_READ_S32(d + o[E_APOS]);
+    if (o[E_AVEL] >= 0) avel = EC_READ_S32(d + o[E_AVEL]);
+    if (o[E_ATQ]  >= 0) atq  = EC_READ_S16(d + o[E_ATQ]);
+    if (o[E_MODED]>= 0) md   = EC_READ_S8 (d + o[E_MODED]);
+    a->s_sw = sw; a->s_pos = apos; a->s_vel = avel; a->s_tq = atq; a->s_mode = md;
+
+    /* Defaults every cycle: safe targets (current pos, zero vel, zero torque) */
+    int32_t tpos = apos; int32_t tvel = 0; int16_t ttq = 0;
+    uint16_t s = sw & 0x006F;
+
+    switch (a->phase) {
+    case PH_WAIT_OP:
+        cw = 0x0000;
+        if (slave_op) {
+            a->phase = cfg.monitor ? PH_MONITOR : PH_PREPARE;
+            a->cnt = 0;
+        }
+        break;
+
+    case PH_MONITOR:
+        cw = 0x0000;                 /* never enable in monitor mode */
+        break;
+
+    case PH_PREPARE:                 /* mode is written every cycle; wait for echo */
+        cw = CW_SHUTDOWN;
+        a->cnt++;
+        if (a->cnt > 50 && (o[E_MODED] < 0 || md == cfg.opmode)) {
+            a->phase = PH_ENABLING; a->cnt = 0;
+        } else if (a->cnt > 3000) {
+            fprintf(stderr, "axis: mode_display never became %d\n", cfg.opmode);
+            a->phase = PH_FAULT; a->cnt = 0; g_stop = 1;
+        }
+        break;
+
+    case PH_ENABLING:
+        a->cnt++;
+        if (sw & SW_FAULT) {
+            if (cfg.reset_fault && a->cnt < 2000)
+                cw = ((a->cnt / 50) & 1) ? CW_FAULT_RST : 0x0000; /* edge on bit7 */
+            else { a->phase = PH_FAULT; a->cnt = 0; g_stop = 1; }
+            break;
+        }
+        if ((sw & 0x004F) == 0x0040)      cw = CW_SHUTDOWN;      /* switch-on disabled */
+        else if (s == 0x0021)             cw = CW_SWITCH_ON;     /* ready to switch on */
+        else if (s == 0x0023)             cw = CW_ENABLE;        /* switched on        */
+        else if (s == 0x0027) {                                   /* operation enabled  */
+            cw = CW_ENABLE;
+            a->pos0 = apos; a->tpos_d = apos;
+            a->tvel_d = 0; a->ttq_d = 0; a->run_cycles = 0;
+            a->phase = PH_RUN;
+        } else                            cw = CW_SHUTDOWN;
+        if (a->phase == PH_ENABLING && a->cnt > 5000) {
+            fprintf(stderr, "axis: enable sequence timed out (sw=0x%04x)\n", sw);
+            a->phase = PH_FAULT; a->cnt = 0; g_stop = 1;
+        }
+        break;
+
+    case PH_RUN: {
+        if (s != 0x0027 || (sw & SW_FAULT)) {      /* lost operation-enabled */
+            a->phase = PH_FAULT; a->cnt = 0; g_stop = 1; break;
+        }
+        cw = CW_ENABLE;
+        if (stop_req) { a->phase = PH_STOPPING; a->cnt = 0; }
+        double t = a->run_cycles++ * cycle_s;
+        if (cfg.opmode == OPM_CSP) {
+            double off = (cfg.profile == PRF_SINE)
+                       ? cfg.amp * 0.5 * (1.0 - cos(2.0 * M_PI * t / cfg.period)) : 0.0;
+            double tgt = a->pos0 + off;
+            if (fabs(tgt - a->tpos_d) > cfg.max_step) {
+                fprintf(stderr, "axis: CSP step %.1f > max_step %.1f, aborting\n",
+                        fabs(tgt - a->tpos_d), cfg.max_step);
+                a->phase = PH_STOPPING; a->cnt = 0; g_stop = 1;
+            } else a->tpos_d = tgt;
+            tpos = (int32_t)llround(a->tpos_d);
+        } else if (cfg.opmode == OPM_CSV) {
+            ramp(&a->tvel_d, cfg.vel, cfg.vel_accel * cycle_s);
+            tvel = (int32_t)llround(a->tvel_d);
+        } else {
+            ramp(&a->ttq_d, cfg.tq, cfg.tq_rate * cycle_s);
+            ttq = (int16_t)llround(a->ttq_d);
+        }
+        break;
+    }
+
+    case PH_STOPPING: {
+        int done = 1;
+        cw = CW_ENABLE;
+        if (cfg.opmode == OPM_CSP) {
+            tpos = (int32_t)llround(a->tpos_d);        /* hold last target */
+        } else if (cfg.opmode == OPM_CSV) {
+            done = ramp(&a->tvel_d, 0, cfg.vel_accel * cycle_s);
+            tvel = (int32_t)llround(a->tvel_d);
+        } else {
+            done = ramp(&a->ttq_d, 0, cfg.tq_rate * cycle_s);
+            ttq = (int16_t)llround(a->ttq_d);
+        }
+        if (done) {
+            cw = CW_SHUTDOWN;
+            if (++a->cnt > 100) a->phase = PH_DONE;
+        }
+        if (sw & SW_FAULT) { a->phase = PH_FAULT; a->cnt = 0; }
+        break;
+    }
+
+    case PH_FAULT:
+        a->cnt++;
+        cw = cfg.reset_fault ? (((a->cnt / 50) & 1) ? CW_FAULT_RST : 0) : 0x0000;
+        if (a->cnt > 200) a->phase = PH_DONE;
+        break;
+
+    case PH_DONE:
+        cw = CW_SHUTDOWN;
+        break;
+    }
+
+    /* ---- write outputs ---- */
+    if (o[E_CW]   >= 0) EC_WRITE_U16(d + o[E_CW], cw);
+    if (o[E_MODE] >= 0) EC_WRITE_S8 (d + o[E_MODE], (int8_t)cfg.opmode);
+    if (cfg.opmode == OPM_CSP && o[E_TPOS] >= 0) EC_WRITE_S32(d + o[E_TPOS], tpos);
+    if (cfg.opmode == OPM_CSV && o[E_TVEL] >= 0) EC_WRITE_S32(d + o[E_TVEL], tvel);
+    if (cfg.opmode == OPM_CST && o[E_TTQ]  >= 0) EC_WRITE_S16(d + o[E_TTQ],  ttq);
+}
+
+/* ---------------- monitor thread (non-RT; all printing lives here) ---------------- */
+static void *monitor_thread(void *arg)
+{
+    (void)arg;
+    for (;;) {
+        int all_done = 1;
+        printf("\033[2J\033[H");
+        printf("link=%d  master AL=0x%x  slaves=%d  comm_bad=%d  lat_max=%lld us\n",
+               g_link, g_master_al, g_resp, g_comm_bad, g_lat_max_ns / 1000);
+        for (int i = 0; i < n_ax; i++) {
+            axis_t *a = &ax[i];
+            printf("[%d] %-10s sw=0x%04x md=%2d pos=%11d (%8.2f deg) vel=%8d (%7.2f rpm) tq=%5.1f%%\n",
+                   i, PH_NAME[a->phase], a->s_sw, a->s_mode, a->s_pos,
+                   a->s_pos * 360.0 / COUNTS_PER_REV, a->s_vel,
+                   a->s_vel * 60.0 / COUNTS_PER_REV, a->s_tq / 10.0);
+            if (a->phase != PH_DONE) all_done = 0;
+        }
+        fflush(stdout);
+        if (all_done) break;
+        usleep(250000);
+    }
+    return NULL;
+}
+
+/* ---------------- helpers ---------------- */
+static void usage(const char *p)
+{
+    fprintf(stderr,
+    "usage: %s [options]\n"
+    "  --monitor               observe only, never enable the drives\n"
+    "  --mode csp-hold|csp-sine|csv|cst\n"
+    "  --slaves N              use first N slaves (default: all found)\n"
+    "  --cycle-us N            cycle time (default 1000)\n"
+    "  --amp COUNTS --period S csp-sine amplitude / period\n"
+    "  --vel COUNTS_PER_S      csv target   (--vel-accel, --vel-limit)\n"
+    "  --tq PERMILLE           cst target   (--tq-rate, --tq-limit)\n"
+    "  --max-step COUNTS       CSP slew limit per cycle (default 200)\n"
+    "  --duration S            stop automatically (default: Ctrl-C)\n"
+    "  --no-dc | --dc-assign 0x0300 | --dc-shift NS\n"
+    "  --reset-fault           try bit-7 fault reset during enabling (undocumented!)\n"
+    "  --max-tq-sdo PERMILLE   write 0x6072 before OP (only if object exists)\n"
+    "  --rt-prio N  --cpu N\n", p);
+    exit(1);
+}
+
+static long long now_ns(clockid_t c)
+{ struct timespec t; clock_gettime(c, &t); return t.tv_sec * NSEC + t.tv_nsec; }
+
+int main(int argc, char **argv)
+{
+    for (int i = 1; i < argc; i++) {
+        const char *k = argv[i];
+#define NEXT (++i < argc ? argv[i] : (usage(argv[0]), ""))
+        if (!strcmp(k, "--monitor")) cfg.monitor = 1;
+        else if (!strcmp(k, "--mode")) {
+            const char *m = NEXT;
+            if (!strcmp(m, "csp-hold"))      { cfg.opmode = OPM_CSP; cfg.profile = PRF_HOLD; }
+            else if (!strcmp(m, "csp-sine")) { cfg.opmode = OPM_CSP; cfg.profile = PRF_SINE; }
+            else if (!strcmp(m, "csv"))      cfg.opmode = OPM_CSV;
+            else if (!strcmp(m, "cst"))      cfg.opmode = OPM_CST;
+            else usage(argv[0]);
+        }
+        else if (!strcmp(k, "--slaves"))      cfg.nslaves = atoi(NEXT);
+        else if (!strcmp(k, "--cycle-us"))    cfg.cycle_us = atol(NEXT);
+        else if (!strcmp(k, "--amp"))         cfg.amp = atof(NEXT);
+        else if (!strcmp(k, "--period"))      cfg.period = atof(NEXT);
+        else if (!strcmp(k, "--vel"))         cfg.vel = atof(NEXT);
+        else if (!strcmp(k, "--vel-accel"))   cfg.vel_accel = atof(NEXT);
+        else if (!strcmp(k, "--vel-limit"))   cfg.vel_limit = atof(NEXT);
+        else if (!strcmp(k, "--tq"))          cfg.tq = atof(NEXT);
+        else if (!strcmp(k, "--tq-rate"))     cfg.tq_rate = atof(NEXT);
+        else if (!strcmp(k, "--tq-limit"))    cfg.tq_limit = atof(NEXT);
+        else if (!strcmp(k, "--max-step"))    cfg.max_step = atof(NEXT);
+        else if (!strcmp(k, "--duration"))    cfg.duration = atof(NEXT);
+        else if (!strcmp(k, "--no-dc"))       cfg.use_dc = 0;
+        else if (!strcmp(k, "--dc-assign"))   cfg.dc_assign = strtoul(NEXT, NULL, 0);
+        else if (!strcmp(k, "--dc-shift"))    cfg.dc_shift = atoi(NEXT);
+        else if (!strcmp(k, "--reset-fault")) cfg.reset_fault = 1;
+        else if (!strcmp(k, "--max-tq-sdo"))  cfg.max_tq_sdo = atoi(NEXT);
+        else if (!strcmp(k, "--rt-prio"))     cfg.rt_prio = atoi(NEXT);
+        else if (!strcmp(k, "--cpu"))         cfg.cpu = atoi(NEXT);
+        else usage(argv[0]);
+    }
+    if (cfg.cycle_us < 250) { fprintf(stderr, "cycle too short\n"); return 1; }
+    cycle_s = cfg.cycle_us * 1e-6;
+    unsigned long long cycle_ns = (unsigned long long)cfg.cycle_us * 1000ULL;
+
+    /* ---- refuse unsafe parameters up front ---- */
+    if (fabs(cfg.vel) > cfg.vel_limit) { fprintf(stderr, "--vel exceeds --vel-limit\n"); return 1; }
+    if (fabs(cfg.tq)  > cfg.tq_limit)  { fprintf(stderr, "--tq exceeds --tq-limit\n");  return 1; }
+    if (cfg.opmode == OPM_CSP && cfg.profile == PRF_SINE) {
+        double vpk = fabs(cfg.amp) * M_PI / cfg.period;           /* counts/s peak */
+        if (cfg.period <= 0 || vpk * cycle_s > cfg.max_step) {
+            fprintf(stderr, "csp-sine too fast: peak step %.1f counts/cycle > max_step %.1f\n",
+                    vpk * cycle_s, cfg.max_step);
+            return 1;
+        }
+    }
+
+    mlockall(MCL_CURRENT | MCL_FUTURE);
+
+    /* ---- 1. request master, wait for the bus scan ---- */
+    master = ecrt_request_master(0);
+    if (!master) { fprintf(stderr, "cannot request master 0 (is the ethercat service running / another app holding it?)\n"); return 1; }
+
+    ec_master_info_t mi;
+    for (int t = 0; t < 200; t++) {
+        if (ecrt_master(master, &mi) == 0 && !mi.scan_busy && mi.slave_count > 0) break;
+        usleep(50000);
+    }
+    if (ecrt_master(master, &mi) || !mi.link_up || mi.slave_count == 0) {
+        fprintf(stderr, "no link or no slaves found\n"); ecrt_release_master(master); return 1;
+    }
+    n_ax = mi.slave_count;
+    if (cfg.nslaves > 0 && cfg.nslaves < n_ax) n_ax = cfg.nslaves;
+    if (n_ax > MAX_AX) n_ax = MAX_AX;
+
+    domain = ecrt_master_create_domain(master);
+    if (!domain) { fprintf(stderr, "domain create failed\n"); return 1; }
+
+    /* ---- 2. configure every slave ---- */
+    for (int i = 0; i < n_ax; i++) {
+        axis_t *a = &ax[i];
+        ec_slave_info_t si;
+        if (ecrt_master_get_slave(master, i, &si)) { fprintf(stderr, "get_slave(%d) failed\n", i); return 1; }
+        a->vendor = si.vendor_id; a->product = si.product_code;
+        snprintf(a->name, sizeof a->name, "%s", si.name);
+        printf("slave %d: \"%s\" vendor=0x%08x product=0x%08x rev=0x%08x\n",
+               i, si.name, si.vendor_id, si.product_code, si.revision_number);
+
+        a->sc = ecrt_master_slave_config(master, 0, i, a->vendor, a->product);
+        if (!a->sc) { fprintf(stderr, "slave_config(%d) failed\n", i); return 1; }
+#ifdef USE_CUSTOM_PDO
+        if (ecrt_slave_config_pdos(a->sc, EC_END, syncs)) { fprintf(stderr, "config_pdos failed\n"); return 1; }
+#endif
+        for (int e = 0; e < E_N; e++) {
+            unsigned bp = 0;
+            int r = ecrt_slave_config_reg_pdo_entry(a->sc, ENT[e].idx, ENT[e].sub, domain, &bp);
+            a->off[e] = (r >= 0 && bp == 0) ? r : -1;
+        }
+        /* mandatory entries per mode */
+        int ok = a->off[E_CW] >= 0 && a->off[E_SW] >= 0;
+        if (cfg.opmode == OPM_CSP) ok = ok && a->off[E_TPOS] >= 0 && a->off[E_APOS] >= 0;
+        if (cfg.opmode == OPM_CSV) ok = ok && a->off[E_TVEL] >= 0;
+        if (cfg.opmode == OPM_CST) ok = ok && a->off[E_TTQ]  >= 0;
+        if (!ok) {
+            fprintf(stderr, "slave %d: required PDO entries are not in its current mapping.\n"
+                    "  run: ethercat pdos -p %d   and compare with ENT[] / try -DUSE_CUSTOM_PDO\n", i, i);
+            for (int e = 0; e < E_N; e++)
+                fprintf(stderr, "    %-18s 0x%04x : %s\n", ENT[e].name, ENT[e].idx,
+                        a->off[e] >= 0 ? "mapped" : "MISSING");
+            ecrt_release_master(master); return 1;
+        }
+        /* mode not in PDO -> fall back to a one-time SDO write at PREOP->SAFEOP */
+        if (a->off[E_MODE] < 0 && !cfg.monitor)
+            ecrt_slave_config_sdo8(a->sc, 0x6060, 0, (uint8_t)cfg.opmode);
+        if (cfg.max_tq_sdo > 0)
+            ecrt_slave_config_sdo16(a->sc, 0x6072, 0, (uint16_t)cfg.max_tq_sdo);
+        if (cfg.use_dc)
+            ecrt_slave_config_dc(a->sc, cfg.dc_assign, (uint32_t)cycle_ns, cfg.dc_shift, 0, 0);
+        a->phase = PH_WAIT_OP;
+    }
+
+    /* ---- 3. activate ---- */
+    ecrt_master_application_time(master, now_ns(CLOCK_MONOTONIC));
+    if (ecrt_master_activate(master)) { fprintf(stderr, "activate failed\n"); return 1; }
+    dom_data = ecrt_domain_data(domain);
+    if (!dom_data) { fprintf(stderr, "no domain data\n"); return 1; }
+
+    /* ---- 4. real-time setup ---- */
+    signal(SIGINT, on_sig); signal(SIGTERM, on_sig);
+    struct sched_param sp = { .sched_priority = cfg.rt_prio };
+    if (sched_setscheduler(0, SCHED_FIFO, &sp))
+        fprintf(stderr, "warning: SCHED_FIFO failed (%s) - run as root for real-time\n", strerror(errno));
+    if (cfg.cpu >= 0) {
+        cpu_set_t cs; CPU_ZERO(&cs); CPU_SET(cfg.cpu, &cs);
+        sched_setaffinity(0, sizeof cs, &cs);
+    }
+    pthread_t mon; pthread_attr_t pa; pthread_attr_init(&pa);
+    pthread_attr_setinheritsched(&pa, PTHREAD_EXPLICIT_SCHED);
+    struct sched_param sp0 = { .sched_priority = 0 };
+    pthread_attr_setschedpolicy(&pa, SCHED_OTHER);
+    pthread_attr_setschedparam(&pa, &sp0);
+    pthread_create(&mon, &pa, monitor_thread, NULL);
+
+    /* ---- 5. cyclic loop ---- */
+    struct timespec wake; clock_gettime(CLOCK_MONOTONIC, &wake);
+    long long t_start = now_ns(CLOCK_MONOTONIC);
+    unsigned long cyc = 0;
+    int all_done = 0;
+
+    while (!all_done) {
+        wake.tv_nsec += cycle_ns;
+        while (wake.tv_nsec >= NSEC) { wake.tv_nsec -= NSEC; wake.tv_sec++; }
+        clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME, &wake, NULL);
+        long long lat = now_ns(CLOCK_MONOTONIC) - ((long long)wake.tv_sec * NSEC + wake.tv_nsec);
+        if (lat > g_lat_max_ns) g_lat_max_ns = lat;
+
+        ecrt_master_receive(master);
+        ecrt_domain_process(domain);
+
+        ec_domain_state_t ds; ecrt_domain_state(domain, &ds);
+        if (ds.wc_state == EC_WC_COMPLETE) g_comm_bad = 0; else g_comm_bad++;
+
+        if ((cyc % 100) == 0) {
+            ec_master_state_t ms; ecrt_master_state(master, &ms);
+            g_master_al = ms.al_states; g_resp = ms.slaves_responding; g_link = ms.link_up;
+        }
+
+        if (cfg.duration > 0 && (now_ns(CLOCK_MONOTONIC) - t_start) > (long long)(cfg.duration * 1e9))
+            g_stop = 1;
+        if (g_comm_bad > 50 && !cfg.monitor) g_stop = 1;       /* lost the bus: start stopping */
+
+        all_done = 1;
+        for (int i = 0; i < n_ax; i++) {
+            ec_slave_config_state_t st; ecrt_slave_config_state(ax[i].sc, &st);
+            int op = st.operational && ds.wc_state == EC_WC_COMPLETE;
+            if (cfg.monitor && g_stop) ax[i].phase = PH_DONE;
+            axis_step(&ax[i], dom_data, op, g_stop);
+            if (ax[i].phase != PH_DONE) all_done = 0;
+        }
+
+        ecrt_domain_queue(domain);
+        if (cfg.use_dc) {
+            ecrt_master_application_time(master, now_ns(CLOCK_MONOTONIC));
+            ecrt_master_sync_reference_clock(master);
+            ecrt_master_sync_slave_clocks(master);
+        }
+        ecrt_master_send(master);
+        cyc++;
+    }
+
+    pthread_join(mon, NULL);
+    ecrt_release_master(master);       /* slaves drop to INIT/PREOP; SM watchdog protects meanwhile */
+    printf("\ndone.\n");
+    return 0;
+}
+
+give full corrected code
+
+Worked for 12s
+I reviewed your code against the actual EtherCAT PDO mapping you provided for the MyActuator RMD-X.
+There are several issues worth correcting before using it with the motor.
+1. Problems in the current code
+Issue	
+Current code	
+Correction
+CiA 402 state detection	
+Inconsistent masks	
+Use 0x006F consistently
+PDO registration	
+Checks bit position	
+Validate byte and bit offsets
+Monitor mode	
+Writes controlword and mode	
+Keep all motion commands disabled
+Communication monitoring	
+Counts incomplete cycles	
+Also track working counter and slave state
+Real-time loop	
+No handling of interrupted sleep	
+Handle clock_nanosleep() return
+Shutdown	
+Releases master immediately	
+Use a controlled shutdown sequence
+Monitor thread	
+Shared volatile variables	
+Use appropriate atomic synchronization
+2. Your actual PDO mapping
+Your drive reports these mappings:
+RxPDO — master to drive (16 bytes)
+Index	
+Description	
+Size
+0x6040	
+Control word	
+16
+0x607A	
+Target position	
+32
+0x60FF	
+Target velocity	
+32
+0x6071	
+Target torque	
+16
+0x6072	
+Maximum torque	
+16
+0x6060	
+Modes of operation	
+8
+0x2FFD	
+Dummy byte	
+8
+TxPDO — drive to master (16 bytes)
+Index	
+Description	
+Size
+0x6041	
+Status word	
+16
+0x6064	
+Actual position	
+32
+0x606C	
+Actual velocity	
+32
+0x6077	
+Actual torque	
+16
+0x603F	
+Error code	
+16
+0x6061	
+Mode display	
+8
+0x2FFE	
+Dummy byte	
+8
+Your existing ENT[] definitions are compatible with these mappings.
+3. Important: Your previous monitor output
+You previously reported:
+
+text
+link=1
+master AL=0x1
+slaves=1
+comm_bad=10104
+lat_max=13 us
+
+[0] DONE sw=0x0000 md=0 pos=0 vel=0 tq=0
+This is not a normal operational drive reading.
+In particular:
+link=1 means the Ethernet link is up.
+slaves=1 means the master detects one slave.
+sw=0x0000 means you are not receiving a meaningful CiA 402 statusword.
+md=0 means the mode display is not reporting the expected operating mode.
+comm_bad=10104 indicates persistent incomplete domain communication.
+We should resolve this before attempting motor movement.
+4. How I recommend restructuring the application
+I would separate the application into three stages:
+Monitor: Read PDOs and display actual motor values. Never enable the motor.
+Bring-up: Verify slave OP state, working counter, PDO mapping, statusword and mode display.
+Motion: Only allow motion after communication and drive-state checks pass.
+I can provide a complete replacement myact_ctl.c, retaining your command-line interface:
+
+bash
+sudo ./myact_ctl --monitor
+
+sudo ./myact_ctl --mode csp-hold
+
+sudo ./myact_ctl --mode csp-sine --amp 5000 --period 4
+
+sudo ./myact_ctl --mode csv --vel 1000
+
+sudo ./myact_ctl --mode cst --tq 50
+The replacement should default to monitor-only, validate all PDO offsets, check EtherCAT working counters, and refuse motion unless the drive reaches a verified operational state.
+One important question before I write the complete replacement: Are you using the standard IgH EtherCAT master (etherlabmaster) with the RMD-X connected directly to the Cerebellum board, as in your previous setup?
+
+yes
+
+Understood. I'll target your existing setup:
+IgH EtherCAT Master (etherlabmaster)
+Cerebellum board running Linux
+One MyActuator RMD-X EtherCAT E-variant
+Standard PDO mapping (0x1600 and 0x1A00)
+1 ms EtherCAT cycle
+Distributed clocks enabled
+C application using ecrt.h
+One important correction: your reported comm_bad=10104 and sw=0x0000 need to be resolved before enabling the motor. An Ethernet link being up does not establish that PDO communication is working.
+I would make the replacement monitor-first and fail-safe rather than allowing a motion command to proceed when the working counter or slave state is invalid.
+5. First, verify the EtherCAT state
+Run these commands with myact_ctl stopped:
+
+bash
+sudo pkill -x myact_ctl
+sudo ethercat slaves -v
+sudo ethercat master
+sudo ethercat pdos -p 0
+sudo ethercat states
+The important expected condition is:
+Slave state: OP
+Master link: UP
+Domain working counter: complete
+Statusword: a valid CiA 402 value
+Mode display: 8 after CSP mode is selected
+Your earlier AL=0x1 indicates INIT, not OP. We should not bypass this condition.
+6. Build environment
+Your application should link against IgH's EtherCAT library:
+
+bash
+gcc -O2 -Wall -Wextra -o myact_ctl myact_ctl.c \
+    -lethercat -lm -lpthread
+Check that the library is installed:
+
+bash
+ldconfig -p | grep libethercat
+Please send me the output of sudo ethercat states and sudo ethercat slaves -v with the application stopped.
+I want to establish why the drive remains in INIT before giving you the final motion-capable replacement. Otherwise, even perfectly corrected C code could leave you with an application that reports communication failure or attempts to enable a drive whose PDO communication has not been established.
+
+sudo pkill -x myact_ctl
+sudo ethercat slaves -v
+sudo ethercat master
+sudo ethercat pdos -p 0
+sudo ethercat states
+=== Master 0, Slave 0 ===
+Device: Main
+State: PREOP
+Flag: +
+Identity:
+  Vendor Id:       0x00202008
+  Product code:    0x00000000
+  Revision number: 0x00010000
+  Serial number:   0x00000000
+DL information:
+  FMMU bit operation: no
+  Distributed clocks: yes, 64 bit
+  DC system time transmission delay: 0 ns
+Port  Type  Link  Loop    Signal  NextSlave  RxTime [ns]  Diff [ns]   NextDc [ns]
+   0  MII   up    open    yes             -    462838449           0           0
+   1  MII   down  closed  no              -            -           -           -
+   2  N/A   down  closed  no              -            -           -           -
+   3  N/A   down  closed  no              -            -           -           -
+Mailboxes:
+  Bootstrap RX: 0x0000/0, TX: 0x0000/0
+  Standard  RX: 0x1000/128, TX: 0x1080/128
+  Supported protocols: CoE, FoE
+General:
+  Group: MT_Device
+  Image name: 
+  Order number: MT_Device
+  Device name: MT_Device
+  CoE details:
+    Enable SDO: yes
+    Enable SDO Info: yes
+    Enable PDO Assign: yes
+    Enable PDO Configuration: yes
+    Enable Upload at startup: no
+    Enable SDO complete access: yes
+  Flags:
+    Enable SafeOp: no
+    Enable notLRW: no
+  Current consumption: 0 mA
+Master0
+  Phase: Idle
+  Active: no
+  Slaves: 1
+  Ethernet devices:
+    Main: c0:74:2b:f8:74:a1 (attached)
+      Link: UP
+      Tx frames:   828495
+      Tx bytes:    68843010
+      Rx frames:   828494
+      Rx bytes:    68842950
+      Tx errors:   0
+      Tx frame rate [1/s]:    406    411    419
+      Tx rate [KByte/s]:     23.8   24.1   25.2
+      Rx frame rate [1/s]:    406    411    419
+      Rx rate [KByte/s]:     23.8   24.1   25.2
+    Common:
+      Tx frames:   828495
+      Tx bytes:    68843010
+      Rx frames:   828494
+      Rx bytes:    68842950
+      Lost frames: 0
+      Tx frame rate [1/s]:    406    411    419
+      Tx rate [KByte/s]:     23.8   24.1   25.2
+      Rx frame rate [1/s]:    406    411    419
+      Rx rate [KByte/s]:     23.8   24.1   25.2
+      Loss rate [1/s]:          0      0      0
+      Frame loss [%]:         0.0    0.0    0.0
+  Distributed clocks:
+    Reference clock:   Slave 0
+    DC reference time: 0
+    Application time:  0
+                       2000-01-01 00:00:00.000000000
+SM0: PhysAddr 0x1000, DefaultSize  128, ControlRegister 0x26, Enable 1
+SM1: PhysAddr 0x1080, DefaultSize  128, ControlRegister 0x22, Enable 1
+SM2: PhysAddr 0x1100, DefaultSize   16, ControlRegister 0x64, Enable 1
+  RxPDO 0x1600 "RCV PDO Mapping0"
+    PDO entry 0x6040:00, 16 bit, "control word"
+    PDO entry 0x607a:00, 32 bit, "target position"
+    PDO entry 0x60ff:00, 32 bit, "target velocity"
+    PDO entry 0x6071:00, 16 bit, "Target Torque"
+    PDO entry 0x6072:00, 16 bit, "Max Torque"
+    PDO entry 0x6060:00,  8 bit, "modes of operation"
+    PDO entry 0x2ffd:00,  8 bit, "Dummy Byte1"
+SM3: PhysAddr 0x1400, DefaultSize   16, ControlRegister 0x20, Enable 1
+  TxPDO 0x1a00 "SND PDO Mapping0"
+    PDO entry 0x6041:00, 16 bit, "status word"
+    PDO entry 0x6064:00, 32 bit, "position actual value"
+    PDO entry 0x606c:00, 32 bit, "velocity actual value"
+    PDO entry 0x6077:00, 16 bit, "torque actual value"
+    PDO entry 0x603f:00, 16 bit, "Error Code"
+    PDO entry 0x6061:00,  8 bit, "modes of operation display"
+    PDO entry 0x2ffe:00,  8 bit, "Dummy Byte2"
+'states' takes exactly one argument!
+
+ethercat states [OPTIONS] <STATE>
+
+Request application-layer states.
+
+Arguments:
+  STATE can be 'INIT', 'PREOP', 'BOOT', 'SAFEOP', or 'OP'.
+
+Command-specific options:
+  --alias    -a <alias>
+  --position -p <pos>    Slave selection. See the help of
+                         the 'slaves' command.
+
+Numerical values can be specified either with decimal (no
+prefix), octal (prefix '0') or hexadecimal (prefix '0x') base.
+
+Your latest output is useful. We have identified an important distinction: the EtherCAT network is communicating, but the master is currently idle and the slave is in PREOP.
+1. What your output tells us
+Ethernet
+link
+UP
+ 
+1
+slave
+detected
+ 
+No
+frame
+loss
+Slave
+PREOP
+ 
+Master
+inactive
+Parameter	
+Observed	
+Meaning
+Ethernet link	
+UP	
+Physical link established
+Slaves	
+1	
+Drive detected
+Lost frames	
+0	
+No reported frame loss
+Master phase	
+Idle	
+No active application
+Slave AL state	
+PREOP	
+Not operational
+RxPDO	
+16 bytes	
+Mapping detected
+TxPDO	
+16 bytes	
+Mapping detected
+Distributed clocks	
+Supported	
+Drive supports DC
+The PDO mapping matches your C application's intended objects.
+Also, the command at the end was incorrect:
+
+bash
+sudo ethercat states
+The states command requires a requested state argument.
+2. Run these diagnostic commands
+First, read the slave's AL status and AL status code:
+
+bash
+sudo ethercat reg_read -p 0 0x0130 2
+sudo ethercat reg_read -p 0 0x0134 2
+The second command is particularly important. It can tell us why the slave is refusing a state transition.
+Also run:
+
+bash
+sudo ethercat upload -p 0 0x1001 0
+sudo ethercat upload -p 0 0x6041 0
+sudo ethercat upload -p 0 0x6061 0
+These read:
+0x1001: Error register
+0x6041: Drive statusword
+0x6061: Operation mode display
+3. Don't force OP yet
+Although the command syntax is:
+
+bash
+sudo ethercat states OP
+I recommend waiting until we know the AL status code. Forcing a state transition without understanding the error can hide the actual configuration problem.
+4. What I need next
+Please paste the output of these five commands:
+
+bash
+sudo ethercat reg_read -p 0 0x0130 2
+sudo ethercat reg_read -p 0 0x0134 2
+sudo ethercat upload -p 0 0x1001 0
+sudo ethercat upload -p 0 0x6041 0
+sudo ethercat upload -p 0 0x6061 0
+Once we have those values, we can determine whether the problem is:
+PDO/FMMU configuration.
+Sync Manager configuration.
+Distributed clock configuration.
+Drive-specific PREOP-to-SAFEOP requirements.
+CiA 402 drive initialization.
+Then we can finalize myact_ctl.c against your actual drive rather than guessing at its configuration.
+
+sudo ethercat reg_read -p 0 0x0130 2
+sudo ethercat reg_read -p 0 0x0134 2
+0x02 0x00
+0x00 0x00
+raybot@raybot:~/myact_ctl$ sudo ethercat upload -p 0 0x1001 0
+sudo ethercat upload -p 0 0x6041 0
+sudo ethercat upload -p 0 0x6061 0
+0x00 0
+0x0210 528
+0x00 0
+
+Excellent. These readings narrow down the problem considerably.
+1. Interpret your results
+Register/object	
+Value	
+Interpretation
+AL Status 0x0130	
+0x0002	
+PREOP
+AL Status Code 0x0134	
+0x0000	
+No reported AL error
+Error register 0x1001	
+0x00	
+No reported CoE error
+Statusword 0x6041	
+0x0210	
+Drive-specific status; not sufficient to establish enabled state
+Mode display 0x6061	
+0	
+No active operation mode reported
+Important: There is no reported AL error. This suggests the slave is not reporting a specific EtherCAT state-transition failure.
+However, we still need to establish why it isn't transitioning into SAFEOP.
+2. Check Sync Manager configuration
+Run:
+
+bash
+sudo ethercat reg_read -p 0 0x0800 8
+sudo ethercat reg_read -p 0 0x0808 8
+sudo ethercat reg_read -p 0 0x0810 8
+sudo ethercat reg_read -p 0 0x0818 8
+These inspect the Sync Manager configuration registers.
+Your expected mapping is:
+SM0: Mailbox receive
+SM1: Mailbox transmit
+SM2: Process data output (RxPDO)
+SM3: Process data input (TxPDO)
+3. Check the PDO assignment objects
+Run:
+
+bash
+sudo ethercat upload -p 0 0x1C12 0
+sudo ethercat upload -p 0 0x1C12 1
+sudo ethercat upload -p 0 0x1C13 0
+sudo ethercat upload -p 0 0x1C13 1
+We want to verify that:
+0x1C12 assigns RxPDO 0x1600.
+0x1C13 assigns TxPDO 0x1A00.
+4. One important observation about your C code
+Your original program configures DC using:
+
+c
+ecrt_slave_config_dc(a->sc, cfg.dc_assign,
+                     (uint32_t)cycle_ns,
+                     cfg.dc_shift, 0, 0);
+Your previous master output showed:
+
+text
+DC reference time: 680246959098
+Application time:  831400046789
+The reference and application clocks were significantly different.
+That is something we should investigate, but we should not assume it is the reason for PREOP.
+Also, your existing configuration uses 0x0300 as the DC AssignActivate value. We need to verify that against the drive's ESI/device documentation before relying on it.
+Please send me the Sync Manager register values and PDO assignment values from sections 2 and 3.
+With those results, we can determine whether the next correction belongs in the IgH PDO configuration, DC setup, or the drive's initialization sequence. Do not attempt motor motion yet.
+
+sudo ethercat reg_read -p 0 0x0800 8
+sudo ethercat reg_read -p 0 0x0808 8
+sudo ethercat reg_read -p 0 0x0810 8
+sudo ethercat reg_read -p 0 0x0818 8
+0x00 0x10 0x80 0x00 0x26 0x02 0x01 0x00
+0x80 0x10 0x80 0x00 0x22 0x80 0x01 0x00
+0x00 0x00 0x00 0x00 0x00 0x30 0x00 0x01
+0x00 0x00 0x00 0x00 0x00 0x30 0x00 0x01
+raybot@raybot:~/myact_ctl$ sudo ethercat upload -p 0 0x1C12 0
+sudo ethercat upload -p 0 0x1C12 1
+sudo ethercat upload -p 0 0x1C13 0
+sudo ethercat upload -p 0 0x1C13 1
+0x01 1
+0x1600 5632
+0x01 1
+0x1a00 6656
+
+Excellent. These results are very useful. We can now confirm that your drive's PDO assignments are correct.
+However, there is one important issue in the Sync Manager configuration that deserves attention.
+1. PDO assignment: confirmed
+Your results:
+
+text
+0x1C12:00 = 1
+0x1C12:01 = 0x1600
+
+0x1C13:00 = 1
+0x1C13:01 = 0x1A00
+PDO assignments verified
+This confirms:
+SM2 is assigned to RxPDO 0x1600.
+SM3 is assigned to TxPDO 0x1A00.
+Both PDO assignments contain one PDO.
+There is no need to invent a custom PDO mapping based on the information available.
+2. Sync Manager register analysis
+Your register values:
+SM	
+Physical address	
+Length	
+Control	
+Enable
+SM0	
+0x1000	
+128	
+0x26	
+1
+SM1	
+0x1080	
+128	
+0x22	
+1
+SM2	
+0x0000	
+0	
+0x30	
+1
+SM3	
+0x0000	
+0	
+0x30	
+1
+The important observation is that SM2 and SM3 currently have zero physical addresses and zero lengths.
+That is consistent with your drive still being in PREOP: the process-data Sync Managers have not yet been configured by an active EtherCAT master application.
+This is not proof of a faulty PDO assignment.
+Your PDO assignment objects are correct, but the process-data Sync Manager configuration is not yet active.
+3. Next diagnostic: check the ESI and IgH configuration
+Before changing your C program, let's inspect your installed ESI files.
+Run:
+
+bash
+sudo find /etc/ethercat /usr/share -iname '*202008*' -o -iname '*myact*' 2>/dev/null
+Also:
+
+bash
+ethercat version
+And:
+
+bash
+grep -R -n -i 'MT_Device\|20202008' \
+    /etc/ethercat /usr/share/ethercat 2>/dev/null
+We want to establish the correct:
+Sync Manager directions.
+PDO assignment.
+Distributed Clock AssignActivate.
+Watchdog configuration.
+4. Important correction to your original C code
+Your existing code has this configuration:
+
+c
+#ifdef USE_CUSTOM_PDO
+static ec_sync_info_t syncs[] = {
+    {0, EC_DIR_OUTPUT, 0, NULL, EC_WD_DISABLE},
+    {1, EC_DIR_INPUT,  0, NULL, EC_WD_DISABLE},
+    {2, EC_DIR_OUTPUT, 1, pdos + 0, EC_WD_ENABLE},
+    {3, EC_DIR_INPUT,  1, pdos + 1, EC_WD_DISABLE},
+    {0xff}
+};
+#endif
+The directions are consistent with the usual EtherCAT master perspective:
+SM2: master outputs.
+SM3: master inputs.
+But I would not enable custom PDO configuration yet. Your drive already reports the desired default PDO assignments.
+5. What happens next?
+Once we establish the ESI/DC configuration, I can produce the complete corrected application with:
+Correct IgH PDO registration.
+Proper 16-byte RxPDO and TxPDO handling.
+Correct Sync Manager setup.
+Distributed clock configuration based on verified device settings.
+Working-counter validation.
+CiA 402 state-machine monitoring.
+Separate monitor and motion modes.
+Controlled shutdown.
+Error-code reporting from 0x603F.
+For now, please send the output of the three diagnostic commands in section 3.
+One important point: don't manually force the slave into OP or start CSP/CST motion while its process-data configuration is still unverified.
+
+sudo find /etc/ethercat /usr/share -iname '*202008*' -o -iname '*myact*' 2>/dev/null
+raybot@raybot:~/myact_ctl$ ethercat version
+IgH EtherCAT master 1.6.7 1.6.7-2-g6acfd097
+raybot@raybot:~/myact_ctl$ grep -R -n -i 'MT_Device\|20202008' \
+    /etc/ethercat /usr/share/ethercat 2>/dev/null
+raybot@raybot:~/myact_ctl$
+
+Good. We now know you are running:
+
+text
+IgH EtherCAT master 1.6.7
+Vendor ID:       0x00202008
+Product code:    0x00000000
+Revision:        0x00010000
+Device name:     MT_Device
+PDO Rx:          0x1600
+PDO Tx:          0x1A00
+Your ESI search returned no matching file. This means we should not assume the DC configuration value 0x0300 is correct.
+1. My recommendation
+Let's use the existing default PDO mappings rather than changing the PDO assignments.
+The next thing to establish is whether IgH can transition the slave into SAFEOP with a correctly configured process-data domain.
+Your previous register output showed:
+
+text
+SM2: address=0x0000 length=0
+SM3: address=0x0000 length=0
+These are currently unconfigured process-data Sync Managers, not evidence of a broken PDO assignment.
+2. Check the available EtherCAT configuration
+Run:
+
+bash
+sudo ethercat slaves
+sudo ethercat master
+sudo ethercat xml
+If ethercat xml is unsupported, run:
+
+bash
+ethercat help
+Also check the IgH master service configuration:
+
+bash
+cat /etc/ethercat.conf
+3. Check the drive's PDO configuration through CoE
+Run:
+
+bash
+sudo ethercat sdos -p 0
+Then:
+
+bash
+sudo ethercat upload -p 0 0x1600 0
+sudo ethercat upload -p 0 0x1A00 0
+sudo ethercat upload -p 0 0x1C32 1
+sudo ethercat upload -p 0 0x1C33 1
+The last two objects are useful for checking Sync Manager synchronization settings, if supported.
+4. Important change to the replacement application
+I would make the corrected application use these principles:
+Feature	
+Configuration
+EtherCAT cycle	
+1000 µs
+PDO mapping	
+Existing drive mapping
+RxPDO	
+16 bytes
+TxPDO	
+16 bytes
+CSP	
+Mode 8
+CSV	
+Mode 9
+CST	
+Mode 10
+Initial mode	
+Monitor only
+DC	
+Disabled until verified
+Motion	
+Locked until OP and valid PDO communication
+One more important detail: your earlier program has an error in its CSP slew-limit check. It checks the difference between consecutive targets rather than safely validating the complete commanded trajectory. I'll correct that in the replacement.
+Please send the output of sudo ethercat sdos -p 0 and the four upload commands.
+We are close to having enough information to write a device-specific implementation instead of relying on assumptions about the MyActuator firmware.
+
+sudo ethercat slaves
+sudo ethercat master
+sudo ethercat xml
+0  0:0  PREOP  +  MT_Device
+Master0
+  Phase: Idle
+  Active: no
+  Slaves: 1
+  Ethernet devices:
+    Main: c0:74:2b:f8:74:a1 (attached)
+      Link: UP
+      Tx frames:   965547
+      Tx bytes:    77067670
+      Rx frames:   965546
+      Rx bytes:    77067610
+      Tx errors:   0
+      Tx frame rate [1/s]:    399    387    397
+      Tx rate [KByte/s]:     23.4   22.6   23.2
+      Rx frame rate [1/s]:    399    387    397
+      Rx rate [KByte/s]:     23.4   22.6   23.2
+    Common:
+      Tx frames:   965547
+      Tx bytes:    77067670
+      Rx frames:   965546
+      Rx bytes:    77067610
+      Lost frames: 0
+      Tx frame rate [1/s]:    399    387    397
+      Tx rate [KByte/s]:     23.4   22.6   23.2
+      Rx frame rate [1/s]:    399    387    397
+      Rx rate [KByte/s]:     23.4   22.6   23.2
+      Loss rate [1/s]:          0      0      0
+      Frame loss [%]:         0.0    0.0    0.0
+  Distributed clocks:
+    Reference clock:   Slave 0
+    DC reference time: 0
+    Application time:  0
+                       2000-01-01 00:00:00.000000000
+<?xml version="1.0" ?>
+<EtherCATInfo>
+  <!-- Slave 0 -->
+  <Vendor>
+    <Id>2105352</Id>
+  </Vendor>
+  <Descriptions>
+    <Devices>
+      <Device>
+        <Type ProductCode="#x00000000" RevisionNo="#x00010000">MT_Device</Type>
+        <Name><![CDATA[MT_Device]]></Name>
+        <Sm Enable="1" StartAddress="#x1000" ControlByte="#x26" DefaultSize="128" />
+        <Sm Enable="1" StartAddress="#x1080" ControlByte="#x22" DefaultSize="128" />
+        <Sm Enable="1" StartAddress="#x1100" ControlByte="#x64" DefaultSize="16" />
+        <Sm Enable="1" StartAddress="#x1400" ControlByte="#x20" DefaultSize="16" />
+        <RxPdo Sm="2" Fixed="1" Mandatory="1">
+          <Index>#x1600</Index>
+          <Name>RCV PDO Mapping0</Name>
+          <Entry>
+            <Index>#x6040</Index>
+            <SubIndex>0</SubIndex>
+            <BitLen>16</BitLen>
+            <Name>control word</Name>
+            <DataType>UINT16</DataType>
+          </Entry>
+          <Entry>
+            <Index>#x607a</Index>
+            <SubIndex>0</SubIndex>
+            <BitLen>32</BitLen>
+            <Name>target position</Name>
+            <DataType>UINT32</DataType>
+          </Entry>
+          <Entry>
+            <Index>#x60ff</Index>
+            <SubIndex>0</SubIndex>
+            <BitLen>32</BitLen>
+            <Name>target velocity</Name>
+            <DataType>UINT32</DataType>
+          </Entry>
+          <Entry>
+            <Index>#x6071</Index>
+            <SubIndex>0</SubIndex>
+            <BitLen>16</BitLen>
+            <Name>Target Torque</Name>
+            <DataType>UINT16</DataType>
+          </Entry>
+          <Entry>
+            <Index>#x6072</Index>
+            <SubIndex>0</SubIndex>
+            <BitLen>16</BitLen>
+            <Name>Max Torque</Name>
+            <DataType>UINT16</DataType>
+          </Entry>
+          <Entry>
+            <Index>#x6060</Index>
+            <SubIndex>0</SubIndex>
+            <BitLen>8</BitLen>
+            <Name>modes of operation</Name>
+            <DataType>UINT8</DataType>
+          </Entry>
+          <Entry>
+            <Index>#x2ffd</Index>
+            <SubIndex>0</SubIndex>
+            <BitLen>8</BitLen>
+            <Name>Dummy Byte1</Name>
+            <DataType>UINT8</DataType>
+          </Entry>
+        </RxPdo>
+        <TxPdo Sm="3" Fixed="1" Mandatory="1">
+          <Index>#x1a00</Index>
+          <Name>SND PDO Mapping0</Name>
+          <Entry>
+            <Index>#x6041</Index>
+            <SubIndex>0</SubIndex>
+            <BitLen>16</BitLen>
+            <Name>status word</Name>
+            <DataType>UINT16</DataType>
+          </Entry>
+          <Entry>
+            <Index>#x6064</Index>
+            <SubIndex>0</SubIndex>
+            <BitLen>32</BitLen>
+            <Name>position actual value</Name>
+            <DataType>UINT32</DataType>
+          </Entry>
+          <Entry>
+            <Index>#x606c</Index>
+            <SubIndex>0</SubIndex>
+            <BitLen>32</BitLen>
+            <Name>velocity actual value</Name>
+            <DataType>UINT32</DataType>
+          </Entry>
+          <Entry>
+            <Index>#x6077</Index>
+            <SubIndex>0</SubIndex>
+            <BitLen>16</BitLen>
+            <Name>torque actual value</Name>
+            <DataType>UINT16</DataType>
+          </Entry>
+          <Entry>
+            <Index>#x603f</Index>
+            <SubIndex>0</SubIndex>
+            <BitLen>16</BitLen>
+            <Name>Error Code</Name>
+            <DataType>UINT16</DataType>
+          </Entry>
+          <Entry>
+            <Index>#x6061</Index>
+            <SubIndex>0</SubIndex>
+            <BitLen>8</BitLen>
+            <Name>modes of operation display</Name>
+            <DataType>UINT8</DataType>
+          </Entry>
+          <Entry>
+            <Index>#x2ffe</Index>
+            <SubIndex>0</SubIndex>
+            <BitLen>8</BitLen>
+            <Name>Dummy Byte2</Name>
+            <DataType>UINT8</DataType>
+          </Entry>
+        </TxPdo>
+      </Device>
+    </Devices>
+  </Descriptions>
+</EtherCATInfo>
+cat /etc/ethercat.conf
+#------------------------------------------------------------------------------
+#
+#  EtherCAT master configuration file for use with ethercatctl.
+#
+#  vim: spelllang=en spell tw=78
+#
+#------------------------------------------------------------------------------
+
+#
+# Main Ethernet devices.
+#
+# The MASTER<X>_DEVICE variable specifies the Ethernet device for a master
+# with index 'X'.
+#
+# Specify the MAC address (hexadecimal with colons) of the Ethernet device to
+# use. Example: "00:00:08:44:ab:66"
+#
+# Alternatively, a network interface name can be specified. The interface
+# name will be resolved to a MAC address using the 'ip' command.
+# Example: "eth0"
+#
+# The broadcast address "ff:ff:ff:ff:ff:ff" has a special meaning: It tells
+# the master to accept the first device offered by any Ethernet driver.
+#
+# The MASTER<X>_DEVICE variables also determine, how many masters will be
+# created: A non-empty variable MASTER0_DEVICE will create one master, adding a
+# non-empty variable MASTER1_DEVICE will create a second master, and so on.
+#
+# Examples:
+# MASTER0_DEVICE="00:00:08:44:ab:66"
+# MASTER0_DEVICE="eth0"
+#
+MASTER0_DEVICE="enP3p49s0"
+#MASTER1_DEVICE=""
+
+#
+# Backup Ethernet devices
+#
+# The MASTER<X>_BACKUP variables specify the devices used for redundancy. They
+# behaves nearly the same as the MASTER<X>_DEVICE variable, except that it
+# does not interpret the ff:ff:ff:ff:ff:ff address.
+#
+#MASTER0_BACKUP=""
+
+#
+# Ethernet driver modules to use for EtherCAT operation.
+#
+# Specify a non-empty list of Ethernet drivers, that shall be used for
+# EtherCAT operation.
+#
+# Except for the generic Ethernet driver module, the init script will try to
+# unload the usual Ethernet driver modules in the list and replace them with
+# the EtherCAT-capable ones. If a certain (EtherCAT-capable) driver is not
+# found, a warning will appear.
+#
+# Possible values: 8139too, e100, e1000, e1000e, r8169, generic, ccat, igb, igc, genet, dwmac-intel, stmmac-pci.
+# Separate multiple drivers with spaces.
+# A list of all matching kernel versions can be found here:
+# https://docs.etherlab.org/ethercat/1.6/doxygen/devicedrivers.html
+#
+# Note: The e100, e1000, e1000e, r8169, ccat, igb and igc drivers are not built by
+# default. Enable them with the --enable-<driver> configure switches.
+#
+DEVICE_MODULES="generic"
+
+# If you have any issues about network interfaces not being configured
+# properly, systemd may need some additional infos about your setup.
+# Have a look at the service file, you'll find some details there.
+#
+
+#
+# List of interfaces to bring up and down automatically.
+#
+# Specify a space-separated list of interface names (such as eth0 or
+# enp0s1) that shall be brought up on `ethercatctl start` and down on
+# `ethercatctl stop`.
+#
+# When using the generic driver, the corresponding Ethernet device has to be
+# activated before the master is started, otherwise all frames will time out.
+# This the perfect use-case for `UPDOWN_INTERFACES`.
+#
+UPDOWN_INTERFACES=""
+
+#
+# Flags for loading kernel modules.
+#
+# This can usually be left empty. Adjust this variable, if you have problems
+# with module loading.
+#
+#MODPROBE_FLAGS="-b"
+
+#------------------------------------------------------------------------------
+sudo ethercat sdos -p 0
+SDO 0x1000, "Device type"
+  0x1000:00, r-r-r-, uint32, 32 bit, "Device type"
+SDO 0x1001, "Error register"
+  0x1001:00, r-r-r-, uint8, 8 bit, "Error register"
+SDO 0x1008, "Device name"
+  0x1008:00, r-r-r-, string, 72 bit, "Device name"
+SDO 0x1009, "Hardware version"
+  0x1009:00, r-r-r-, string, 32 bit, "Hardware version"
+SDO 0x100a, "Software version"
+  0x100a:00, r-r-r-, string, 80 bit, "Software version"
+SDO 0x1018, "Identity"
+  0x1018:00, r-r-r-, uint8, 8 bit, "SubIndex 000"
+  0x1018:01, r-r-r-, uint32, 32 bit, "Vendor ID"
+  0x1018:02, r-r-r-, uint32, 32 bit, "Product code"
+  0x1018:03, r-r-r-, uint32, 32 bit, "Revision"
+  0x1018:04, r-r-r-, uint32, 32 bit, "Serial number"
+SDO 0x10f1, "Error Settings"
+  0x10f1:00, r-r-r-, uint8, 8 bit, "SubIndex 000"
+  0x10f1:01, rwrwrw, uint32, 32 bit, "Local Error Reaction"
+  0x10f1:02, rwrwrw, uint16, 16 bit, "Sync Error Counter Limit"
+SDO 0x10f8, "Timestamp Object"
+  0x10f8:00, rwrwrw, uint64, 64 bit, "Timestamp Object"
+SDO 0x1600, "RCV PDO Mapping0"
+  0x1600:00, rwrwrw, uint8, 8 bit, "SubIndex 000"
+  0x1600:01, rwrwrw, uint32, 32 bit, "SubIndex 001"
+  0x1600:02, rwrwrw, uint32, 32 bit, "SubIndex 002"
+  0x1600:03, rwrwrw, uint32, 32 bit, "SubIndex 003"
+  0x1600:04, rwrwrw, uint32, 32 bit, "SubIndex 004"
+  0x1600:05, rwrwrw, uint32, 32 bit, "SubIndex 005"
+  0x1600:06, rwrwrw, uint32, 32 bit, "SubIndex 006"
+  0x1600:07, rwrwrw, uint32, 32 bit, "SubIndex 007"
+  0x1600:08, rwrwrw, uint32, 32 bit, "SubIndex 008"
+  0x1600:09, rwrwrw, uint32, 32 bit, "SubIndex 009"
+  0x1600:0a, rwrwrw, uint32, 32 bit, "SubIndex 010"
+  0x1600:0b, rwrwrw, uint32, 32 bit, "SubIndex 011"
+  0x1600:0c, rwrwrw, uint32, 32 bit, "SubIndex 012"
+  0x1600:0d, rwrwrw, uint32, 32 bit, "SubIndex 013"
+  0x1600:0e, rwrwrw, uint32, 32 bit, "SubIndex 014"
+  0x1600:0f, rwrwrw, uint32, 32 bit, "SubIndex 015"
+  0x1600:10, rwrwrw, uint32, 32 bit, "SubIndex 016"
+SDO 0x1601, "RCV PDO Mapping1"
+  0x1601:00, rwrwrw, uint8, 8 bit, "SubIndex 000"
+  0x1601:01, rwrwrw, uint32, 32 bit, "SubIndex 001"
+  0x1601:02, rwrwrw, uint32, 32 bit, "SubIndex 002"
+  0x1601:03, rwrwrw, uint32, 32 bit, "SubIndex 003"
+  0x1601:04, rwrwrw, uint32, 32 bit, "SubIndex 004"
+  0x1601:05, rwrwrw, uint32, 32 bit, "SubIndex 005"
+  0x1601:06, rwrwrw, uint32, 32 bit, "SubIndex 006"
+  0x1601:07, rwrwrw, uint32, 32 bit, "SubIndex 007"
+  0x1601:08, rwrwrw, uint32, 32 bit, "SubIndex 008"
+  0x1601:09, rwrwrw, uint32, 32 bit, "SubIndex 009"
+  0x1601:0a, rwrwrw, uint32, 32 bit, "SubIndex 010"
+  0x1601:0b, rwrwrw, uint32, 32 bit, "SubIndex 011"
+  0x1601:0c, rwrwrw, uint32, 32 bit, "SubIndex 012"
+  0x1601:0d, rwrwrw, uint32, 32 bit, "SubIndex 013"
+  0x1601:0e, rwrwrw, uint32, 32 bit, "SubIndex 014"
+  0x1601:0f, rwrwrw, uint32, 32 bit, "SubIndex 015"
+  0x1601:10, rwrwrw, uint32, 32 bit, "SubIndex 016"
+SDO 0x1602, "RCV PDO Mapping2"
+  0x1602:00, rwrwrw, uint8, 8 bit, "SubIndex 000"
+  0x1602:01, rwrwrw, uint32, 32 bit, "SubIndex 001"
+  0x1602:02, rwrwrw, uint32, 32 bit, "SubIndex 002"
+  0x1602:03, rwrwrw, uint32, 32 bit, "SubIndex 003"
+  0x1602:04, rwrwrw, uint32, 32 bit, "SubIndex 004"
+  0x1602:05, rwrwrw, uint32, 32 bit, "SubIndex 005"
+  0x1602:06, rwrwrw, uint32, 32 bit, "SubIndex 006"
+  0x1602:07, rwrwrw, uint32, 32 bit, "SubIndex 007"
+  0x1602:08, rwrwrw, uint32, 32 bit, "SubIndex 008"
+  0x1602:09, rwrwrw, uint32, 32 bit, "SubIndex 009"
+  0x1602:0a, rwrwrw, uint32, 32 bit, "SubIndex 010"
+  0x1602:0b, rwrwrw, uint32, 32 bit, "SubIndex 011"
+  0x1602:0c, rwrwrw, uint32, 32 bit, "SubIndex 012"
+  0x1602:0d, rwrwrw, uint32, 32 bit, "SubIndex 013"
+  0x1602:0e, rwrwrw, uint32, 32 bit, "SubIndex 014"
+  0x1602:0f, rwrwrw, uint32, 32 bit, "SubIndex 015"
+  0x1602:10, rwrwrw, uint32, 32 bit, "SubIndex 016"
+SDO 0x1603, "RCV PDO Mapping3"
+  0x1603:00, rwrwrw, uint8, 8 bit, "SubIndex 000"
+  0x1603:01, rwrwrw, uint32, 32 bit, "SubIndex 001"
+  0x1603:02, rwrwrw, uint32, 32 bit, "SubIndex 002"
+  0x1603:03, rwrwrw, uint32, 32 bit, "SubIndex 003"
+  0x1603:04, rwrwrw, uint32, 32 bit, "SubIndex 004"
+  0x1603:05, rwrwrw, uint32, 32 bit, "SubIndex 005"
+  0x1603:06, rwrwrw, uint32, 32 bit, "SubIndex 006"
+  0x1603:07, rwrwrw, uint32, 32 bit, "SubIndex 007"
+  0x1603:08, rwrwrw, uint32, 32 bit, "SubIndex 008"
+  0x1603:09, rwrwrw, uint32, 32 bit, "SubIndex 009"
+  0x1603:0a, rwrwrw, uint32, 32 bit, "SubIndex 010"
+  0x1603:0b, rwrwrw, uint32, 32 bit, "SubIndex 011"
+  0x1603:0c, rwrwrw, uint32, 32 bit, "SubIndex 012"
+  0x1603:0d, rwrwrw, uint32, 32 bit, "SubIndex 013"
+  0x1603:0e, rwrwrw, uint32, 32 bit, "SubIndex 014"
+  0x1603:0f, rwrwrw, uint32, 32 bit, "SubIndex 015"
+  0x1603:10, rwrwrw, uint32, 32 bit, "SubIndex 016"
+SDO 0x1a00, "SND PDO Mapping0"
+  0x1a00:00, rwrwrw, uint8, 8 bit, "SubIndex 000"
+  0x1a00:01, rwrwrw, uint32, 32 bit, "SubIndex 001"
+  0x1a00:02, rwrwrw, uint32, 32 bit, "SubIndex 002"
+  0x1a00:03, rwrwrw, uint32, 32 bit, "SubIndex 003"
+  0x1a00:04, rwrwrw, uint32, 32 bit, "SubIndex 004"
+  0x1a00:05, rwrwrw, uint32, 32 bit, "SubIndex 005"
+  0x1a00:06, rwrwrw, uint32, 32 bit, "SubIndex 006"
+  0x1a00:07, rwrwrw, uint32, 32 bit, "SubIndex 007"
+  0x1a00:08, rwrwrw, uint32, 32 bit, "SubIndex 008"
+  0x1a00:09, rwrwrw, uint32, 32 bit, "SubIndex 009"
+  0x1a00:0a, rwrwrw, uint32, 32 bit, "SubIndex 010"
+  0x1a00:0b, rwrwrw, uint32, 32 bit, "SubIndex 011"
+  0x1a00:0c, rwrwrw, uint32, 32 bit, "SubIndex 012"
+  0x1a00:0d, rwrwrw, uint32, 32 bit, "SubIndex 013"
+  0x1a00:0e, rwrwrw, uint32, 32 bit, "SubIndex 014"
+  0x1a00:0f, rwrwrw, uint32, 32 bit, "SubIndex 015"
+  0x1a00:10, rwrwrw, uint32, 32 bit, "SubIndex 016"
+SDO 0x1a01, "SND PDO Mapping1"
+  0x1a01:00, rwrwrw, uint8, 8 bit, "SubIndex 000"
+  0x1a01:01, rwrwrw, uint32, 32 bit, "SubIndex 001"
+  0x1a01:02, rwrwrw, uint32, 32 bit, "SubIndex 002"
+  0x1a01:03, rwrwrw, uint32, 32 bit, "SubIndex 003"
+  0x1a01:04, rwrwrw, uint32, 32 bit, "SubIndex 004"
+  0x1a01:05, rwrwrw, uint32, 32 bit, "SubIndex 005"
+  0x1a01:06, rwrwrw, uint32, 32 bit, "SubIndex 006"
+  0x1a01:07, rwrwrw, uint32, 32 bit, "SubIndex 007"
+  0x1a01:08, rwrwrw, uint32, 32 bit, "SubIndex 008"
+  0x1a01:09, rwrwrw, uint32, 32 bit, "SubIndex 009"
+  0x1a01:0a, rwrwrw, uint32, 32 bit, "SubIndex 010"
+  0x1a01:0b, rwrwrw, uint32, 32 bit, "SubIndex 011"
+  0x1a01:0c, rwrwrw, uint32, 32 bit, "SubIndex 012"
+  0x1a01:0d, rwrwrw, uint32, 32 bit, "SubIndex 013"
+  0x1a01:0e, rwrwrw, uint32, 32 bit, "SubIndex 014"
+  0x1a01:0f, rwrwrw, uint32, 32 bit, "SubIndex 015"
+  0x1a01:10, rwrwrw, uint32, 32 bit, "SubIndex 016"
+SDO 0x1a02, "SND PDO Mapping2"
+  0x1a02:00, rwrwrw, uint8, 8 bit, "SubIndex 000"
+  0x1a02:01, rwrwrw, uint32, 32 bit, "SubIndex 001"
+  0x1a02:02, rwrwrw, uint32, 32 bit, "SubIndex 002"
+  0x1a02:03, rwrwrw, uint32, 32 bit, "SubIndex 003"
+  0x1a02:04, rwrwrw, uint32, 32 bit, "SubIndex 004"
+  0x1a02:05, rwrwrw, uint32, 32 bit, "SubIndex 005"
+  0x1a02:06, rwrwrw, uint32, 32 bit, "SubIndex 006"
+  0x1a02:07, rwrwrw, uint32, 32 bit, "SubIndex 007"
+  0x1a02:08, rwrwrw, uint32, 32 bit, "SubIndex 008"
+  0x1a02:09, rwrwrw, uint32, 32 bit, "SubIndex 009"
+  0x1a02:0a, rwrwrw, uint32, 32 bit, "SubIndex 010"
+  0x1a02:0b, rwrwrw, uint32, 32 bit, "SubIndex 011"
+  0x1a02:0c, rwrwrw, uint32, 32 bit, "SubIndex 012"
+  0x1a02:0d, rwrwrw, uint32, 32 bit, "SubIndex 013"
+  0x1a02:0e, rwrwrw, uint32, 32 bit, "SubIndex 014"
+  0x1a02:0f, rwrwrw, uint32, 32 bit, "SubIndex 015"
+  0x1a02:10, rwrwrw, uint32, 32 bit, "SubIndex 016"
+SDO 0x1a03, "SND PDO Mapping3"
+  0x1a03:00, rwrwrw, uint8, 8 bit, "SubIndex 000"
+  0x1a03:01, rwrwrw, uint32, 32 bit, "SubIndex 001"
+  0x1a03:02, rwrwrw, uint32, 32 bit, "SubIndex 002"
+  0x1a03:03, rwrwrw, uint32, 32 bit, "SubIndex 003"
+  0x1a03:04, rwrwrw, uint32, 32 bit, "SubIndex 004"
+  0x1a03:05, rwrwrw, uint32, 32 bit, "SubIndex 005"
+  0x1a03:06, rwrwrw, uint32, 32 bit, "SubIndex 006"
+  0x1a03:07, rwrwrw, uint32, 32 bit, "SubIndex 007"
+  0x1a03:08, rwrwrw, uint32, 32 bit, "SubIndex 008"
+  0x1a03:09, rwrwrw, uint32, 32 bit, "SubIndex 009"
+  0x1a03:0a, rwrwrw, uint32, 32 bit, "SubIndex 010"
+  0x1a03:0b, rwrwrw, uint32, 32 bit, "SubIndex 011"
+  0x1a03:0c, rwrwrw, uint32, 32 bit, "SubIndex 012"
+  0x1a03:0d, rwrwrw, uint32, 32 bit, "SubIndex 013"
+  0x1a03:0e, rwrwrw, uint32, 32 bit, "SubIndex 014"
+  0x1a03:0f, rwrwrw, uint32, 32 bit, "SubIndex 015"
+  0x1a03:10, rwrwrw, uint32, 32 bit, "SubIndex 016"
+SDO 0x1c00, "Sync manager type"
+  0x1c00:00, r-r-r-, uint8, 8 bit, "SubIndex 000"
+  0x1c00:01, r-r-r-, uint8, 8 bit, "SubIndex 001"
+  0x1c00:02, r-r-r-, uint8, 8 bit, "SubIndex 002"
+  0x1c00:03, r-r-r-, uint8, 8 bit, "SubIndex 003"
+  0x1c00:04, r-r-r-, uint8, 8 bit, "SubIndex 004"
+SDO 0x1c12, "Obj0x1C12"
+  0x1c12:00, rwr-r-, uint8, 8 bit, "SubIndex 000"
+  0x1c12:01, rwr-r-, uint16, 16 bit, "SubIndex 001"
+  0x1c12:02, rwr-r-, uint16, 16 bit, "SubIndex 002"
+  0x1c12:03, rwr-r-, uint16, 16 bit, "SubIndex 003"
+  0x1c12:04, rwr-r-, uint16, 16 bit, "SubIndex 004"
+SDO 0x1c13, "Obj0x1C13"
+  0x1c13:00, rwr-r-, uint8, 8 bit, "SubIndex 000"
+  0x1c13:01, rwr-r-, uint16, 16 bit, "SubIndex 001"
+  0x1c13:02, rwr-r-, uint16, 16 bit, "SubIndex 002"
+  0x1c13:03, rwr-r-, uint16, 16 bit, "SubIndex 003"
+  0x1c13:04, rwr-r-, uint16, 16 bit, "SubIndex 004"
+SDO 0x1c32, "SM output parameter"
+  0x1c32:00, r-r-r-, uint8, 8 bit, "SubIndex 000"
+  0x1c32:01, rwr-r-, uint16, 16 bit, "Synchronization Type"
+  0x1c32:02, r-r-r-, uint32, 32 bit, "Cycle Time"
+  0x1c32:03, ------, type 0000, 32 bit, "SubIndex 003"
+  0x1c32:04, r-r-r-, uint16, 16 bit, "Synchronization Types supported"
+  0x1c32:05, r-r-r-, uint32, 32 bit, "Minimum Cycle Time"
+  0x1c32:06, r-r-r-, uint32, 32 bit, "Calc and Copy Time"
+  0x1c32:07, ------, type 0000, 32 bit, "SubIndex 007"
+  0x1c32:08, rwrwrw, uint16, 16 bit, "Get Cycle Time"
+  0x1c32:09, r-r-r-, uint32, 32 bit, "Delay Time"
+  0x1c32:0a, rwrwrw, uint32, 32 bit, "Sync0 Cycle Time"
+  0x1c32:0b, r-r-r-, uint16, 16 bit, "SM-Event Missed"
+  0x1c32:0c, r-r-r-, uint16, 16 bit, "Cycle Time Too Small"
+  0x1c32:0d, ------, type 0000, 16 bit, "Shift Time Too Short"
+  0x1c32:0e, ------, type 0000, 16 bit, "SubIndex 014"
+  0x1c32:0f, ------, type 0000, 32 bit, "SubIndex 015"
+  0x1c32:10, ------, type 0000, 32 bit, "SubIndex 016"
+  0x1c32:11, ------, type 0000, 32 bit, "SubIndex 017"
+  0x1c32:12, ------, type 0000, 32 bit, "SubIndex 018"
+  0x1c32:13, ------, type 0000, 0 bit, "SubIndex 019"
+  0x1c32:14, ------, type 0000, 0 bit, "SubIndex 020"
+  0x1c32:15, ------, type 0000, 0 bit, "SubIndex 021"
+  0x1c32:16, ------, type 0000, 0 bit, "SubIndex 022"
+  0x1c32:17, ------, type 0000, 0 bit, "SubIndex 023"
+  0x1c32:18, ------, type 0000, 0 bit, "SubIndex 024"
+  0x1c32:19, ------, type 0000, 0 bit, "SubIndex 025"
+  0x1c32:1a, ------, type 0000, 0 bit, "SubIndex 026"
+  0x1c32:1b, ------, type 0000, 0 bit, "SubIndex 027"
+  0x1c32:1c, ------, type 0000, 0 bit, "SubIndex 028"
+  0x1c32:1d, ------, type 0000, 0 bit, "SubIndex 029"
+  0x1c32:1e, ------, type 0000, 0 bit, "SubIndex 030"
+  0x1c32:1f, ------, type 0000, 0 bit, "SubIndex 031"
+  0x1c32:20, r-r-r-, bool, 1 bit, "Sync Error"
+SDO 0x1c33, "SM input parameter"
+  0x1c33:00, r-r-r-, uint8, 8 bit, "SubIndex 000"
+  0x1c33:01, rwr-r-, uint16, 16 bit, "Synchronization Type"
+  0x1c33:02, r-r-r-, uint32, 32 bit, "Cycle Time"
+  0x1c33:03, ------, type 0000, 32 bit, "SubIndex 003"
+  0x1c33:04, r-r-r-, uint16, 16 bit, "Synchronization Types supported"
+  0x1c33:05, r-r-r-, uint32, 32 bit, "Minimum Cycle Time"
+  0x1c33:06, r-r-r-, uint32, 32 bit, "Calc and Copy Time"
+  0x1c33:07, ------, type 0000, 32 bit, "SubIndex 007"
+  0x1c33:08, rwrwrw, uint16, 16 bit, "Get Cycle Time"
+  0x1c33:09, r-r-r-, uint32, 32 bit, "Delay Time"
+  0x1c33:0a, rwrwrw, uint32, 32 bit, "Sync0 Cycle Time"
+  0x1c33:0b, r-r-r-, uint16, 16 bit, "SM-Event Missed"
+  0x1c33:0c, r-r-r-, uint16, 16 bit, "Cycle Time Too Small"
+  0x1c33:0d, ------, type 0000, 16 bit, "Shift Time Too Short"
+  0x1c33:0e, ------, type 0000, 16 bit, "SubIndex 014"
+  0x1c33:0f, ------, type 0000, 32 bit, "SubIndex 015"
+  0x1c33:10, ------, type 0000, 32 bit, "SubIndex 016"
+  0x1c33:11, ------, type 0000, 32 bit, "SubIndex 017"
+  0x1c33:12, ------, type 0000, 32 bit, "SubIndex 018"
+  0x1c33:13, ------, type 0000, 0 bit, "SubIndex 019"
+  0x1c33:14, ------, type 0000, 0 bit, "SubIndex 020"
+  0x1c33:15, ------, type 0000, 0 bit, "SubIndex 021"
+  0x1c33:16, ------, type 0000, 0 bit, "SubIndex 022"
+  0x1c33:17, ------, type 0000, 0 bit, "SubIndex 023"
+  0x1c33:18, ------, type 0000, 0 bit, "SubIndex 024"
+  0x1c33:19, ------, type 0000, 0 bit, "SubIndex 025"
+  0x1c33:1a, ------, type 0000, 0 bit, "SubIndex 026"
+  0x1c33:1b, ------, type 0000, 0 bit, "SubIndex 027"
+  0x1c33:1c, ------, type 0000, 0 bit, "SubIndex 028"
+  0x1c33:1d, ------, type 0000, 0 bit, "SubIndex 029"
+  0x1c33:1e, ------, type 0000, 0 bit, "SubIndex 030"
+  0x1c33:1f, ------, type 0000, 0 bit, "SubIndex 031"
+  0x1c33:20, r-r-r-, bool, 1 bit, "Sync Error"
+SDO 0x2000, "PVT_KP"
+  0x2000:00, rwrwrw, int32, 32 bit, "PVT_KP"
+SDO 0x2001, "PVT_KD"
+  0x2001:00, rwrwrw, int32, 32 bit, "PVT_KD"
+SDO 0x2002, "CUR_LOOP_KP"
+  0x2002:00, rwrwrw, float, 32 bit, "CUR_LOOP_KP"
+SDO 0x2003, "CUR_LOOP_KI"
+  0x2003:00, rwrwrw, float, 32 bit, "CUR_LOOP_KI"
+SDO 0x2004, "SPD_LOOP_KP"
+  0x2004:00, rwrwrw, float, 32 bit, "SPD_LOOP_KP"
+SDO 0x2005, "SPD_LOOP_KI"
+  0x2005:00, rwrwrw, float, 32 bit, "SPD_LOOP_KI"
+SDO 0x2006, "POS_LOOP_KP"
+  0x2006:00, rwrwrw, float, 32 bit, "POS_LOOP_KP"
+SDO 0x2007, "POS_LOOP_KI"
+  0x2007:00, rwrwrw, float, 32 bit, "POS_LOOP_KI"
+SDO 0x2008, "POS_LOOP_KD"
+  0x2008:00, rwrwrw, float, 32 bit, "POS_LOOP_KD"
+SDO 0x2009, "Motor Temperature"
+  0x2009:00, r-r-r-, int16, 16 bit, "Motor Temperature"
+SDO 0x200a, "Voltage"
+  0x200a:00, r-r-r-, uint16, 16 bit, "Voltage"
+SDO 0x200b, "First Encoder Value"
+  0x200b:00, r-r-r-, int32, 32 bit, "First Encoder Value"
+SDO 0x200c, "Drive Temperature"
+  0x200c:00, r-r-r-, int16, 16 bit, "Drive Temperature"
+SDO 0x200d, "Filtered Velocity Value"
+  0x200d:00, r-r-r-, int32, 32 bit, "Filtered Velocity Value"
+SDO 0x200e, "Velocity LPF Fc"
+  0x200e:00, rwrwrw, float, 32 bit, "Velocity LPF Fc"
+SDO 0x200f, "Filtered Torque Value"
+  0x200f:00, r-r-r-, int16, 16 bit, "Filtered Torque Value"
+SDO 0x2010, "Torque LPF Fc"
+  0x2010:00, rwrwrw, float, 32 bit, "Torque LPF Fc"
+SDO 0x2011, "Fault LPF Fc"
+  0x2011:00, rwrwrw, float, 32 bit, "Fault LPF Fc"
+SDO 0x2ffd, "Dummy Byte1"
+  0x2ffd:00, rwrwrw, int8, 8 bit, "Dummy Byte1"
+SDO 0x2ffe, "Dummy Byte2"
+  0x2ffe:00, r-r-r-, int8, 8 bit, "Dummy Byte2"
+SDO 0x603f, "Error Code"
+  0x603f:00, r-r-r-, uint16, 16 bit, "Error Code"
+SDO 0x6040, "control word"
+  0x6040:00, rwrwrw, uint16, 16 bit, "control word"
+SDO 0x6041, "status word"
+  0x6041:00, r-r-r-, uint16, 16 bit, "status word"
+SDO 0x605a, "quickstop option code"
+  0x605a:00, rwrwrw, int16, 16 bit, "quickstop option code"
+SDO 0x605b, "shutdown option code"
+  0x605b:00, rwrwrw, int16, 16 bit, "shutdown option code"
+SDO 0x605c, "disable operation option code"
+  0x605c:00, rwrwrw, int16, 16 bit, "disable operation option code"
+SDO 0x605e, "fault reaction code"
+  0x605e:00, rwrwrw, int16, 16 bit, "fault reaction code"
+SDO 0x6060, "modes of operation"
+  0x6060:00, rwrwrw, int8, 8 bit, "modes of operation"
+SDO 0x6061, "modes of operation display"
+  0x6061:00, r-r-r-, int8, 8 bit, "modes of operation display"
+SDO 0x6062, "Position Demand Value"
+  0x6062:00, r-r-r-, int32, 32 bit, "Position Demand Value"
+SDO 0x6064, "position actual value"
+  0x6064:00, r-r-r-, int32, 32 bit, "position actual value"
+SDO 0x6065, "Following Error Window"
+  0x6065:00, rwrwrw, uint32, 32 bit, "Following Error Window"
+SDO 0x6066, "Following Error Window Time Out"
+  0x6066:00, rwrwrw, uint16, 16 bit, "Following Error Window Time Out"
+SDO 0x6067, "Position Window"
+  0x6067:00, rwrwrw, uint32, 32 bit, "Position Window"
+SDO 0x6068, "Position Window Time"
+  0x6068:00, rwrwrw, uint16, 16 bit, "Position Window Time"
+SDO 0x606b, "Velocity Demand Value"
+  0x606b:00, r-r-r-, int32, 32 bit, "Velocity Demand Value"
+SDO 0x606c, "velocity actual value"
+  0x606c:00, r-r-r-, int32, 32 bit, "velocity actual value"
+SDO 0x6071, "Target Torque"
+  0x6071:00, rwrwrw, int16, 16 bit, "Target Torque"
+SDO 0x6072, "Max Torque"
+  0x6072:00, rwrwrw, uint16, 16 bit, "Max Torque"
+SDO 0x6074, "Torque Demand Value"
+  0x6074:00, r-r-r-, int16, 16 bit, "Torque Demand Value"
+SDO 0x6075, "Motor Rate Current"
+  0x6075:00, rwrwrw, int32, 32 bit, "Motor Rate Current"
+SDO 0x6077, "torque actual value"
+  0x6077:00, r-r-r-, int16, 16 bit, "torque actual value"
+SDO 0x607a, "target position"
+  0x607a:00, rwrwrw, int32, 32 bit, "target position"
+SDO 0x607d, "Software Position Limit"
+  0x607d:00, rwrwrw, uint8, 8 bit, "SubIndex 000"
+  0x607d:01, rwrwrw, int32, 32 bit, "Min Position Limit"
+  0x607d:02, rwrwrw, int32, 32 bit, "Max Position Limit"
+SDO 0x6081, "Profile Velocity"
+  0x6081:00, rwrwrw, uint32, 32 bit, "Profile Velocity"
+SDO 0x6083, "Profile Acceleration"
+  0x6083:00, rwrwrw, uint32, 32 bit, "Profile Acceleration"
+SDO 0x6084, "Profile Deceleration"
+  0x6084:00, rwrwrw, uint32, 32 bit, "Profile Deceleration"
+SDO 0x6085, "Quick Stop Deceleration"
+  0x6085:00, rwrwrw, uint32, 32 bit, "Quick Stop Deceleration"
+SDO 0x6098, "Homing method"
+  0x6098:00, rwrwrw, int8, 8 bit, "Homing method"
+SDO 0x6099, "Homing speeds"
+  0x6099:00, r-r-r-, uint8, 8 bit, "SubIndex 000"
+  0x6099:01, rwrwrw, uint16, 16 bit, "Speed for switch search"
+  0x6099:02, rwrwrw, uint16, 16 bit, "Speed for zero search"
+SDO 0x609a, "Homing acceleration"
+  0x609a:00, rwrwrw, uint16, 16 bit, "Homing acceleration"
+SDO 0x60b0, "Position Offset"
+  0x60b0:00, rwrwrw, int32, 32 bit, "Position Offset"
+SDO 0x60b1, "Velocity Offset"
+  0x60b1:00, rwrwrw, int32, 32 bit, "Velocity Offset"
+SDO 0x60b2, "Torque Offset"
+  0x60b2:00, rwrwrw, int16, 16 bit, "Torque Offset"
+SDO 0x60c2, "interpolation time period"
+  0x60c2:00, rwrwrw, uint8, 8 bit, "SubIndex 000"
+  0x60c2:01, rwrwrw, int8, 8 bit, "interpolation period"
+  0x60c2:02, rwrwrw, int8, 8 bit, "interpolation index"
+SDO 0x60f4, "Following Error Actual Value"
+  0x60f4:00, r-r-r-, int32, 32 bit, "Following Error Actual Value"
+SDO 0x60ff, "target velocity"
+  0x60ff:00, rwrwrw, int32, 32 bit, "target velocity"
+SDO 0x6502, "supported drive modes"
+  0x6502:00, r-r-r-, uint32, 32 bit, "supported drive modes"
+sudo ethercat upload -p 0 0x1600 0
+sudo ethercat upload -p 0 0x1A00 0
+sudo ethercat upload -p 0 0x1C32 1
+sudo ethercat upload -p 0 0x1C33 1
+0x07 7
+0x07 7
+0x0002 2
+0x0002 2
+
+Excellent. We now have enough information to identify the EtherCAT drive configuration and move to the next diagnostic stage.
+1. What we have confirmed
+Your device is responding correctly at the EtherCAT communication level.
+Parameter	
+Observed value	
+Meaning
+Vendor ID	
+0x00202008	
+Drive manufacturer ID
+Product code	
+0x00000000	
+No product code assigned
+Revision	
+0x00010000	
+Hardware revision
+EtherCAT state	
+PREOP	
+Pre-operational
+Slave count	
+1	
+Drive detected
+RxPDO	
+0x1600	
+7 mapped entries
+TxPDO	
+0x1A00	
+7 mapped entries
+Output sync	
+2	
+DC synchronization
+Input sync	
+2	
+DC synchronization
+Error register	
+0x00	
+No reported error-register flags
+Error code	
+0x0210	
+Needs manufacturer-specific interpretation
+2. Your PDO configuration
+The drive has a 16-byte output PDO and a 16-byte input PDO.
+Master → Drive (RxPDO)
+Offset	
+Object	
+Description	
+Size
+0	
+6040	
+Control word	
+2
+2	
+607A	
+Target position	
+4
+6	
+60FF	
+Target velocity	
+4
+10	
+6071	
+Target torque	
+2
+12	
+6072	
+Maximum torque	
+2
+14	
+6060	
+Operation mode	
+1
+15	
+2FFD	
+Dummy byte	
+1
+Drive → Master (TxPDO)
+Offset	
+Object	
+Description	
+Size
+0	
+6041	
+Status word	
+2
+2	
+6064	
+Actual position	
+4
+6	
+606C	
+Actual velocity	
+4
+10	
+6077	
+Actual torque	
+2
+12	
+603F	
+Error code	
+2
+14	
+6061	
+Mode display	
+1
+15	
+2FFE	
+Dummy byte	
+1
+This is a useful CiA-402-style drive interface.
+3. Important issue: Master is still Idle
+Your output shows:
+
+text
+Phase: Idle
+Active: no
+Slaves: 1
+The drive is in PREOP, but the EtherCAT master has not activated its process-data domain.
+Therefore, we cannot yet conclude that cyclic PDO communication is working.
+Also, synchronization type 2 indicates DC synchronization, so the application's DC configuration and cycle timing will need attention.
+4. Next diagnostic commands
+Before attempting to enable the motor, let's collect the drive's actual status and error information.
+Run:
+
+bash
+sudo ethercat upload -p 0 0x6041 0
+sudo ethercat upload -p 0 0x603f 0
+sudo ethercat upload -p 0 0x6061 0
+sudo ethercat upload -p 0 0x6064 0
+sudo ethercat upload -p 0 0x606c 0
+
+sudo ethercat upload -p 0 0x1c32 4
+sudo ethercat upload -p 0 0x1c32 5
+sudo ethercat upload -p 0 0x1c33 4
+sudo ethercat upload -p 0 0x1c33 5
+
+sudo ethercat states
+sudo ethercat master
+Do not write control words or request OP yet. We should first establish the drive's fault status and synchronization requirements.
+5. One important question
+What exactly are you trying to achieve with this drive?
+A. Run the motor using EtherCAT in CSP mode (Cyclic Synchronous Position).
+B. Run the motor in CSV mode (Cyclic Synchronous Velocity).
+C. Run the motor in CST mode (Cyclic Synchronous Torque).
+D. Integrate the motor into your myact_ctl application.
+Send the command outputs and your choice. Then we can work on the correct IgH EtherCAT master configuration, PDO registration, DC synchronization, and CiA-402 state handling.
+
+This might also interest you.
+Learn more
+
+
+Mech On Site
+MECH ON SITE
+Mechanics Parts Machines all at one platform
+Ad
+
+sudo ethercat upload -p 0 0x6041 0
+sudo ethercat upload -p 0 0x603f 0
+sudo ethercat upload -p 0 0x6061 0
+sudo ethercat upload -p 0 0x6064 0
+sudo ethercat upload -p 0 0x606c 0
+
+sudo ethercat upload -p 0 0x1c32 4
+sudo ethercat upload -p 0 0x1c32 5
+sudo ethercat upload -p 0 0x1c33 4
+sudo ethercat upload -p 0 0x1c33 5
+
+sudo ethercat states
+sudo ethercat master
+0x0210 528
+0x0000 0
+0x00 0
+0x0000ef07 61191
+0xfffffff4 -12
+0x401f 16415
+0x0003d090 250000
+0x401f 16415
+0x0003d090 250000
+'states' takes exactly one argument!
+
+ethercat states [OPTIONS] <STATE>
+
+Request application-layer states.
+
+Arguments:
+  STATE can be 'INIT', 'PREOP', 'BOOT', 'SAFEOP', or 'OP'.
+
+Command-specific options:
+  --alias    -a <alias>
+  --position -p <pos>    Slave selection. See the help of
+                         the 'slaves' command.
+
+Numerical values can be specified either with decimal (no
+prefix), octal (prefix '0') or hexadecimal (prefix '0x') base.
+Master0
+  Phase: Idle
+  Active: no
+  Slaves: 1
+  Ethernet devices:
+    Main: c0:74:2b:f8:74:a1 (attached)
+      Link: UP
+      Tx frames:   1047003
+      Tx bytes:    81957890
+      Rx frames:   1047002
+      Rx bytes:    81957830
+      Tx errors:   0
+      Tx frame rate [1/s]:    408    408    406
+      Tx rate [KByte/s]:     24.7   24.0   23.8
+      Rx frame rate [1/s]:    408    408    406
+      Rx rate [KByte/s]:     24.7   24.0   23.8
+    Common:
+      Tx frames:   1047003
+      Tx bytes:    81957890
+      Rx frames:   1047002
+      Rx bytes:    81957830
+      Lost frames: 0
+      Tx frame rate [1/s]:    408    408    406
+      Tx rate [KByte/s]:     24.7   24.0   23.8
+      Rx frame rate [1/s]:    408    408    406
+      Rx rate [KByte/s]:     24.7   24.0   23.8
+      Loss rate [1/s]:          0      0      0
+      Frame loss [%]:         0.0    0.0    0.0
+  Distributed clocks:
+    Reference clock:   Slave 0
+    DC reference time: 0
+    Application time:  0
+
+Good. These readings reveal an important detail about your MT_Device drive. The EtherCAT communication is stable, and we now have its synchronization parameters.
+1. Interpret the results
+Object	
+Value	
+Interpretation
+0x6041	
+0x0210	
+Status word
+0x603F	
+0x0000	
+No drive error reported
+0x6061	
+0x00	
+No active operation mode displayed
+0x6064	
+61191	
+Actual position
+0x606C	
+-12	
+Actual velocity
+0x1C32:04	
+0x401F	
+Supported output synchronization types
+0x1C32:05	
+250000	
+Minimum cycle time: 250 µs
+0x1C33:04	
+0x401F	
+Supported input synchronization types
+0x1C33:05	
+250000	
+Minimum cycle time: 250 µs
+Important findings
+Minimum supported cycle time is 250 µs (4 kHz).
+Both Sync Managers report the same synchronization capabilities.
+No drive error is reported through 0x603F.
+The drive is not yet displaying an active operation mode.
+Master remains Idle, Active: no.
+One correction: 0x6041 = 0x0210 is not enough to conclude that the drive is ready for operation. We need to decode its status bits and examine the state transitions.
+2. Check the current CiA-402 state
+0x0210 has these relevant bits:
+Bit 4: Voltage enabled
+Bit 5: Quick stop
+Bit 9: Remote
+Bit 10: Target reached
+The actual state must be decoded using the CiA-402 status-word masks, not by interpreting individual bits alone.
+3. Next commands
+Please execute these read-only diagnostics:
+
+bash
+sudo ethercat upload -p 0 0x1000 0
+sudo ethercat upload -p 0 0x1018 1
+sudo ethercat upload -p 0 0x1018 2
+
+sudo ethercat upload -p 0 0x6060 0
+sudo ethercat upload -p 0 0x6502 0
+
+sudo ethercat upload -p 0 0x1c32 1
+sudo ethercat upload -p 0 0x1c32 2
+sudo ethercat upload -p 0 0x1c32 10
+
+sudo ethercat upload -p 0 0x1c33 1
+sudo ethercat upload -p 0 0x1c33 2
+sudo ethercat upload -p 0 0x1c33 10
+Also, to check the EtherCAT state, remember the correct syntax:
+
+bash
+sudo ethercat states PREOP
+sudo ethercat slaves
+Do not request OP or send motor commands yet.
+4. One question about your application
+Are you trying to operate this motor through:
+A. myact_ctl — your existing C/C++ motor-control application.
+B. A new IgH EtherCAT C/C++ application.
+C. ROS 2 / LinuxCNC.
+D. Direct terminal commands for testing.
+I particularly want to establish whether we should repair your existing myact_ctl application or build a minimal EtherCAT master test first.
+Once we establish that, we can address PDO activation, the 250 µs cycle requirement, distributed clocks, and the correct CiA-402 state machine without unexpectedly moving the motor.
+
+myact_ctl
+
+sudo ethercat upload -p 0 0x1000 0
+sudo ethercat upload -p 0 0x1018 1
+sudo ethercat upload -p 0 0x1018 2
+
+sudo ethercat upload -p 0 0x6060 0
+sudo ethercat upload -p 0 0x6502 0
+
+sudo ethercat upload -p 0 0x1c32 1
+sudo ethercat upload -p 0 0x1c32 2
+sudo ethercat upload -p 0 0x1c32 10
+
+sudo ethercat upload -p 0 0x1c33 1
+sudo ethercat upload -p 0 0x1c33 2
+sudo ethercat upload -p 0 0x1c33 10
+0x00000192 402
+0x00202008 2105352
+0x00000000 0
+0x00 0
+0x00006025 24613
+0x0002 2
+0x000f4240 1000000
+0x000f4240 1000000
+0x0002 2
+0x000f4240 1000000
+0x000f4240 1000000
+
+Excellent. Since you're using myact_ctl, I recommend fixing the existing application rather than building another EtherCAT master.
+Your latest readings reveal an important configuration detail.
+1. Confirmed drive configuration
+Parameter	
+Value	
+Meaning
+Device type 0x1000	
+0x192	
+CANopen device profile
+Vendor ID	
+0x00202008	
+Drive manufacturer
+Product code	
+0x00000000	
+Not assigned
+Operation mode 0x6060	
+0	
+No mode selected
+Supported modes 0x6502	
+0x6025	
+Drive-supported modes bitmap
+Output sync type	
+2	
+DC synchronization
+Input sync type	
+2	
+DC synchronization
+Output cycle	
+1,000,000 ns	
+1 ms
+Input cycle	
+1,000,000 ns	
+1 ms
+Important: Your drive reports a minimum cycle time of 250 µs, but its configured cycle time is 1 ms. This is not necessarily a problem. A 1 ms cycle is within the reported minimum-cycle constraint.
+Also, 0x6502 = 0x6025 needs decoding against the supported CiA-402 mode definitions before selecting CSP, CSV or CST.
+2. One potentially important issue: supported operating modes
+Your drive reports:
+
+text
+0x6502 = 0x6025
+The standard CiA-402 mode capability bits for CSP, CSV and CST are bits 6, 7 and 8 respectively. Those bits are not set in 0x6025.
+This means we should not assume CSP, CSV or CST is supported just because the PDO contains position, velocity and torque fields. The manufacturer may also implement additional proprietary behavior.
+3. Let's inspect your existing myact_ctl source
+Run these commands from your project directory:
+
+bash
+cd ~/myact_ctl
+
+pwd
+ls -lah
+
+find . -maxdepth 2 -type f \
+  \( -name '*.c' -o -name '*.cpp' -o -name '*.h' \
+     -o -name '*.hpp' -o -name 'Makefile' \
+     -o -name 'CMakeLists.txt' \)
+Then search for the EtherCAT implementation:
+
+bash
+grep -R -n -E \
+'ecrt_request_master|ecrt_master_activate|ecrt_domain|ecrt_slave_config|ecrt_master_state|ecrt_domain_state|EC_WRITE|EC_READ|6040|6041|6060|607A|60FF' \
+--include='*.c' --include='*.cpp' --include='*.h' --include='*.hpp' .
+4. What I want to fix in myact_ctl
+EtherCAT master initialization
+Confirm that the application requests and activates IgH Master 0 correctly.
+PDO registration
+Match all seven RxPDO and seven TxPDO entries with the actual 16-byte layouts.
+Distributed clock configuration
+Check the 1 ms cycle and DC synchronization settings.
+CiA-402 state monitoring
+Correctly decode status word 0x0210 and identify why the drive is not ready.
+Application integration
+Correct the existing myact_ctl code rather than creating a competing master.
+5. Send me these files
+Please paste the main EtherCAT source file and the header containing the PDO definitions.
+If you're unsure which files they are, send the output of the commands above first.
+Important: Keep the motor disabled during this investigation. We should establish the supported drive modes, correct status-word interpretation and PDO mapping before attempting motor activation.
+My goal is to get your existing myact_ctl communicating with the MT_Device reliably, without unnecessarily rewriting your application.
+
+Log in to analyze data, create charts, and build tables for free.
+
+
+Log in
+
+Sign up for free
+ChatGPT is AI and can make mistakes.
+
+
+
+Chat with ChatGPT
+
+pwd
+ls -lah
+
+find . -maxdepth 2 -type f \
+  \( -name '*.c' -o -name '*.cpp' -o -name '*.h' \
+     -o -name '*.hpp' -o -name 'Makefile' \
+     -o -name 'CMakeLists.txt' \)
+/home/raybot/myact_ctl
+total 128K
+drwxrwxr-x  2 raybot raybot 4.0K Nov 16 18:17 .
+drwxr-x--- 42 raybot raybot 4.0K Nov 16 18:17 ..
+-rw-rw-r--  1 raybot raybot 4.3K Nov 16 18:15 bringup_out.txt
+-rwxrwxr-x  1 raybot raybot 2.1K Nov 16 18:15 bringup.sh
+-rw-r--r--  1 raybot raybot  12K Nov 16 18:12 .bringup.sh.swo
+-rw-r--r--  1 raybot raybot  12K Nov 16 18:11 .bringup.sh.swp
+-rwxrwxr-x  1 raybot raybot  597 Nov  3 15:45 .goutputstream-IGK6X3
+-rw-r--r--  1 raybot raybot  596 Nov  3 19:08 Makefile
+-rwxrwxr-x  1 raybot raybot  29K Nov  3 19:09 myact_ctl
+-rwxrwxrwx  1 raybot raybot  22K Nov  3 18:58 myact_ctl.c
+-rw-rw-r--  1 raybot raybot  18K Nov 16 18:15 sdos_0.txt
+./myact_ctl.c
+./Makefile
+
+
+grep -R -n -E \
+'ecrt_request_master|ecrt_master_activate|ecrt_domain|ecrt_slave_config|ecrt_master_state|ecrt_domain_state|EC_WRITE|EC_READ|6040|6041|6060|607A|60FF' \
+--include='*.c' --include='*.cpp' --include='*.h' --include='*.hpp' .
+./myact_ctl.c:56:    {0x6040, 0, "controlword"},   {0x6060, 0, "mode_of_operation"},
+./myact_ctl.c:57:    {0x607A, 0, "target_position"}, {0x60FF, 0, "target_velocity"},
+./myact_ctl.c:59:    {0x6041, 0, "statusword"},    {0x6061, 0, "mode_display"},
+./myact_ctl.c:68:    {0x6040, 0, 16}, {0x6060, 0, 8}, {0x607A, 0, 32}, {0x60FF, 0, 32}, {0x6071, 0, 16}};
+./myact_ctl.c:70:    {0x6041, 0, 16}, {0x6061, 0, 8}, {0x6064, 0, 32}, {0x606C, 0, 32}, {0x6077, 0, 16}};
+./myact_ctl.c:163:    if (o[E_SW]   >= 0) sw   = EC_READ_U16(d + o[E_SW]);
+./myact_ctl.c:164:    if (o[E_APOS] >= 0) apos = EC_READ_S32(d + o[E_APOS]);
+./myact_ctl.c:165:    if (o[E_AVEL] >= 0) avel = EC_READ_S32(d + o[E_AVEL]);
+./myact_ctl.c:166:    if (o[E_ATQ]  >= 0) atq  = EC_READ_S16(d + o[E_ATQ]);
+./myact_ctl.c:167:    if (o[E_MODED]>= 0) md   = EC_READ_S8 (d + o[E_MODED]);
+./myact_ctl.c:280:    if (o[E_CW]   >= 0) EC_WRITE_U16(d + o[E_CW], cw);
+./myact_ctl.c:281:    if (o[E_MODE] >= 0) EC_WRITE_S8 (d + o[E_MODE], (int8_t)cfg.opmode);
+./myact_ctl.c:282:    if (cfg.opmode == OPM_CSP && o[E_TPOS] >= 0) EC_WRITE_S32(d + o[E_TPOS], tpos);
+./myact_ctl.c:283:    if (cfg.opmode == OPM_CSV && o[E_TVEL] >= 0) EC_WRITE_S32(d + o[E_TVEL], tvel);
+./myact_ctl.c:284:    if (cfg.opmode == OPM_CST && o[E_TTQ]  >= 0) EC_WRITE_S16(d + o[E_TTQ],  ttq);
+./myact_ctl.c:389:    master = ecrt_request_master(0);
+./myact_ctl.c:420:        if (ecrt_slave_config_pdos(a->sc, EC_END, syncs)) { fprintf(stderr, "config_pdos failed\n"); return 1; }
+./myact_ctl.c:424:            int r = ecrt_slave_config_reg_pdo_entry(a->sc, ENT[e].idx, ENT[e].sub, domain, &bp);
+./myact_ctl.c:442:            ecrt_slave_config_sdo8(a->sc, 0x6060, 0, (uint8_t)cfg.opmode);
+./myact_ctl.c:444:            ecrt_slave_config_sdo16(a->sc, 0x6072, 0, (uint16_t)cfg.max_tq_sdo);
+./myact_ctl.c:446:            ecrt_slave_config_dc(a->sc, cfg.dc_assign, (uint32_t)cycle_ns, cfg.dc_shift, 0, 0);
+./myact_ctl.c:452:    if (ecrt_master_activate(master)) { fprintf(stderr, "activate failed\n"); return 1; }
+./myact_ctl.c:453:    dom_data = ecrt_domain_data(domain);
+./myact_ctl.c:486:        ecrt_domain_process(domain);
+./myact_ctl.c:488:        ec_domain_state_t ds; ecrt_domain_state(domain, &ds);
+./myact_ctl.c:492:            ec_master_state_t ms; ecrt_master_state(master, &ms);
+./myact_ctl.c:502:            ec_slave_config_state_t st; ecrt_slave_config_state(ax[i].sc, &st);
+./myact_ctl.c:509:        ecrt_domain_queue(domain);
+
+
+https://chatgpt.com/s/t_6afadefcc0b48191ba6e7be0244f4675

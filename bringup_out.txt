@@ -1,0 +1,134 @@
+========= MASTER ==========
+Master0
+  Phase: Idle
+  Active: no
+  Slaves: 1
+  Ethernet devices:
+    Main: c0:74:2b:f8:74:a1 (attached)
+      Link: UP
+      Tx frames:   173237
+      Tx bytes:    10470412
+      Rx frames:   173236
+      Rx bytes:    10470352
+      Tx errors:   0
+      Tx frame rate [1/s]:    401    403    400
+      Tx rate [KByte/s]:     23.5   23.6   23.4
+      Rx frame rate [1/s]:    401    403    400
+      Rx rate [KByte/s]:     23.5   23.6   23.4
+    Common:
+      Tx frames:   173237
+      Tx bytes:    10470412
+      Rx frames:   173236
+      Rx bytes:    10470352
+      Lost frames: 0
+      Tx frame rate [1/s]:    401    403    400
+      Tx rate [KByte/s]:     23.5   23.6   23.4
+      Rx frame rate [1/s]:    401    403    400
+      Rx rate [KByte/s]:     23.5   23.6   23.4
+      Loss rate [1/s]:          0      0      0
+      Frame loss [%]:         0.0    0.0    0.0
+  Distributed clocks:
+    Reference clock:   Slave 0
+
+========= SLAVES ==========
+=== Master 0, Slave 0 ===
+Device: Main
+State: PREOP
+Flag: +
+Identity:
+  Vendor Id:       0x00202008
+  Product code:    0x00000000
+  Revision number: 0x00010000
+  Serial number:   0x00000000
+DL information:
+  FMMU bit operation: no
+  Distributed clocks: yes, 64 bit
+  DC system time transmission delay: 0 ns
+Port  Type  Link  Loop    Signal  NextSlave  RxTime [ns]  Diff [ns]   NextDc [ns]
+   0  MII   up    open    yes             -   3876038570           0           0
+   1  MII   down  closed  no              -            -           -           -
+   2  N/A   down  closed  no              -            -           -           -
+   3  N/A   down  closed  no              -            -           -           -
+Mailboxes:
+  Bootstrap RX: 0x0000/0, TX: 0x0000/0
+  Standard  RX: 0x1000/128, TX: 0x1080/128
+  Supported protocols: CoE, FoE
+General:
+  Group: MT_Device
+  Image name: 
+  Order number: MT_Device
+  Device name: MT_Device
+  CoE details:
+    Enable SDO: yes
+    Enable SDO Info: yes
+    Enable PDO Assign: yes
+    Enable PDO Configuration: yes
+    Enable Upload at startup: no
+    Enable SDO complete access: yes
+  Flags:
+    Enable SafeOp: no
+    Enable notLRW: no
+  Current consumption: 0 mA
+
+########## SLAVE 0 ##########
+---- Identity Object (0x1018)
+Vendor / Product / Revision / Serial
+Subindex 1:
+0x00202008 2105352
+Subindex 2:
+0x00000000 0
+Subindex 3:
+0x00010000 65536
+Subindex 4:
+0x00000000 0
+
+---- PDOs currently assigned/mapped
+SM0: PhysAddr 0x1000, DefaultSize  128, ControlRegister 0x26, Enable 1
+SM1: PhysAddr 0x1080, DefaultSize  128, ControlRegister 0x22, Enable 1
+SM2: PhysAddr 0x1100, DefaultSize   16, ControlRegister 0x64, Enable 1
+  RxPDO 0x1600 "RCV PDO Mapping0"
+    PDO entry 0x6040:00, 16 bit, "control word"
+    PDO entry 0x607a:00, 32 bit, "target position"
+    PDO entry 0x60ff:00, 32 bit, "target velocity"
+    PDO entry 0x6071:00, 16 bit, "Target Torque"
+    PDO entry 0x6072:00, 16 bit, "Max Torque"
+    PDO entry 0x6060:00,  8 bit, "modes of operation"
+    PDO entry 0x2ffd:00,  8 bit, "Dummy Byte1"
+SM3: PhysAddr 0x1400, DefaultSize   16, ControlRegister 0x20, Enable 1
+  TxPDO 0x1a00 "SND PDO Mapping0"
+    PDO entry 0x6041:00, 16 bit, "status word"
+    PDO entry 0x6064:00, 32 bit, "position actual value"
+    PDO entry 0x606c:00, 32 bit, "velocity actual value"
+    PDO entry 0x6077:00, 16 bit, "torque actual value"
+    PDO entry 0x603f:00, 16 bit, "Error Code"
+    PDO entry 0x6061:00,  8 bit, "modes of operation display"
+    PDO entry 0x2ffe:00,  8 bit, "Dummy Byte2"
+
+---- Key objects
+Statusword (0x6041)
+0x0210 528
+Mode display (0x6061)
+0x00 0
+Actual position (0x6064)
+0x00000000 0
+
+---- Optional: Max torque (0x6072)
+0x0000 0
+
+---- Full dictionary dump
+Saved: sdos_0.txt
+
+---- PDO mapping objects in dictionary
+SDO 0x1600, "RCV PDO Mapping0"
+  0x1600:00, rwrwrw, uint8, 8 bit, "SubIndex 000"
+  0x1600:01, rwrwrw, uint32, 32 bit, "SubIndex 001"
+  0x1600:02, rwrwrw, uint32, 32 bit, "SubIndex 002"
+  0x1600:03, rwrwrw, uint32, 32 bit, "SubIndex 003"
+  0x1600:04, rwrwrw, uint32, 32 bit, "SubIndex 004"
+  0x1600:05, rwrwrw, uint32, 32 bit, "SubIndex 005"
+  0x1600:06, rwrwrw, uint32, 32 bit, "SubIndex 006"
+  0x1600:07, rwrwrw, uint32, 32 bit, "SubIndex 007"
+  0x1600:08, rwrwrw, uint32, 32 bit, "SubIndex 008"
+
+========= INSPECTION COMPLETE ==========
+Next: ./myactl_ctl --monitor

@@ -1,0 +1,57 @@
+1. checking bus:
+ethercat slaves
+
+2. Observe only (nothing is enabled)
+sudo ./myact_ctl --monitor --no-dc
+
+3. Hold position
+# first motor only
+sudo ./myact_ctl --mode csp-hold --slaves 1 --duration 5 --no-dc
+
+# first two motors
+sudo ./myact_ctl --mode csp-hold --slaves 2 --duration 5 --no-dc
+
+# all motors found
+sudo ./myact_ctl --mode csp-hold --duration 5 --no-dc
+
+4.Position move (each motor moves +10000 counts from its own start)
+sudo ./myact_ctl --mode csp-move --delta 10000 --move-time 3 --duration 8 --no-dc
+
+5. Sine move
+sudo ./myact_ctl --mode csp-sine --amp 5000 --period 4 --duration 10 --no-dc
+
+6. Velocity
+sudo ./myact_ctl --mode csv --vel 20000 --duration 5 --no-dc
+sudo ./myact_ctl --mode csv --vel 65536 --duration 5 --no-dc
+sudo ./myact_ctl --mode csv --vel -65536 --duration 5 --no-dc
+
+7. Torque
+sudo ./myact_ctl --mode cst --tq 20 --tq-limit 50 --duration 5 --no-dc
+sudo ./myact_ctl --mode cst --tq 50 --tq-limit 100 --duration 5 --no-dc
+sudo ./myact_ctl --mode cst --tq -50 --tq-limit 100 --duration 5 --no-dc
+
+8. kill process
+sudo pkill -9 myact_ctl
+pgrep -a myact_ctl
+
+9. A different value per motor, same mode:
+
+sudo ./myact_ctl --mode csv --vel 20000,-30000 --duration 5 --expect 2 --no-dc
+sudo ./myact_ctl --mode cst --tq 30,15 --tq-limit 50,40 --duration 5 --expect 2 --no-dc
+sudo ./myact_ctl --mode csp-move --delta 10000,-5000 --move-time 3 --duration 8 --expect 2 --no-dc
+
+10. A different mode per motor:
+
+# [0] velocity, [1] torque
+sudo ./myact_ctl --mode csv,cst --vel 20000,0 --tq 0,30 --tq-limit 50,50 --duration 5 --expect 2 --no-dc
+
+# [0] holds position, [1] spins
+sudo ./myact_ctl --mode csp-hold,csv --vel 0,20000 --duration 5 --expect 2 --no-dc
+
+# [0] position move, [1] velocity
+sudo ./myact_ctl --mode csp-move,csv --delta 10000,0 --vel 0,20000 --move-time 3 --duration 8 --expect 2 --no-dc
+
+##
+sudo ./myact_ctl --mode csv,csv,csv --vel 50000,80000,150000 --tq 0,0,0 --tq-limit 100,100,100 --duration 5,10,15 --expect 3 --no-dc
+sudo ./myact_ctl --mode udp --expect 3 --no-dc --limit-deg 30 --tq-limit 100,100,100 --tq-rate 5000 --vel-limit 20000 --max-step 20 --udp-from 192.168.50.1
+

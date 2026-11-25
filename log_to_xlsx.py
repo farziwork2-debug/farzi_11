@@ -33,11 +33,20 @@ COLS = [
     "time_s", "axis", "phase", "statusword", "error_code", "mode_display",
     "act_pos", "cmd_pos", "act_vel", "cmd_vel", "act_torque_pm", "cmd_torque_pm",
     "pos_deg", "cmd_pos_deg", "vel_rpm", "cmd_vel_rpm", "torque_pct", "cmd_torque_pct",
-    "comm_bad",
+    "comm_bad", "lat_us_max", "slave_online", "al_state", "working_counter",
+    "wc_state", "slaves_responding", "sdo_current_actual", "sdo_dc_link_mv",
+    "sdo_following_error", "sdo_pos_demand", "sdo_vel_demand", "sdo_torque_demand",
+    "sdo_error_register",
 ]
 TEXT_COLS = {"phase", "statusword", "error_code"}
-INT_COLS = {"axis", "mode_display", "act_pos", "cmd_pos", "act_vel", "cmd_vel",
-            "act_torque_pm", "cmd_torque_pm", "comm_bad"}
+INT_COLS = {
+    "axis", "mode_display", "act_pos", "cmd_pos", "act_vel", "cmd_vel",
+    "act_torque_pm", "cmd_torque_pm", "comm_bad", "lat_us_max", "slave_online",
+    "al_state", "working_counter", "wc_state", "slaves_responding",
+    "sdo_current_actual", "sdo_dc_link_mv", "sdo_following_error",
+    "sdo_pos_demand", "sdo_vel_demand", "sdo_torque_demand", "sdo_error_register",
+}
+
 COL = {name: get_column_letter(i + 1) for i, name in enumerate(COLS)}   # name -> letter
 # extra formula columns after the 19 logged ones
 EXTRA = ["pos_err_deg", "vel_err_rpm", "torque_err_pct"]
@@ -57,22 +66,33 @@ BOLD_FONT = Font(name=FONT, bold=True)
 THIN = Side(style="thin", color="BFBFBF")
 BORDER = Border(left=THIN, right=THIN, top=THIN, bottom=THIN)
 
-
 def read_log(path):
     """Return OrderedDict axis -> list of row dicts (values converted to numbers)."""
     axes = OrderedDict()
-    with open(path, newline="") as f:
-        reader = csv.DictReader(f)
-        missing = [c for c in COLS if c not in (reader.fieldnames or [])]
+    with open(path, encoding="utf-8-sig", newline="") as f:
+        data_lines = (
+            line for line in f
+            if line.strip() and not line.lstrip().startswith("#")
+        )
+        reader = csv.DictReader(data_lines)
+        if reader.fieldnames:
+            reader.fieldnames = [h.strip() for h in reader.fieldnames]
+        found = reader.fieldnames or []
+        missing = [c for c in COLS if c not in found]
         if missing:
-            sys.exit("This does not look like a myact_ctl log, missing columns: " + ", ".join(missing))
+            sys.exit(
+                f"Missing columns: {', '.join(missing)}\n"
+                f"Found headers ({len(found)}): {found}"
+            )
         for raw in reader:
             row = {}
             try:
                 for c in COLS:
-                    v = raw[c]
+                    v = (raw[c] or "").strip()
                     if c in TEXT_COLS:
                         row[c] = v
+                    elif v == "":
+                        row[c] = 0 if c in INT_COLS else 0.0
                     elif c in INT_COLS:
                         row[c] = int(float(v))
                     else:
@@ -81,7 +101,6 @@ def read_log(path):
                 continue          # skip a truncated last line (e.g. after a crash)
             axes.setdefault(row["axis"], []).append(row)
     return axes
-
 
 def style_header(ws, ncols):
     for c in range(1, ncols + 1):
